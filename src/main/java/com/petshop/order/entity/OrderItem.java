@@ -22,5 +22,8 @@ public class OrderItem extends BaseEntity {
     private String spec;
     private BigDecimal price;
     private Integer quantity;
+    /** 小计 = price * quantity */
     private BigDecimal subtotal;
+    /** 分摊优惠后实付金额，退款时以此为上限 */
+    private BigDecimal realPayAmount;
 }

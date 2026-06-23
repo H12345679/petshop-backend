@@ -15,6 +15,10 @@
 -- 表归属：A=shop/product  B=user/会员/支付  C=订单  D=video/message  E=推荐/行为
 -- ============================================================
 
+-- 强制本次导入连接使用 utf8mb4，否则 Docker entrypoint 的 mysql 客户端
+-- 可能按 latin1 解读本文件，导致中文注释二次编码变成乱码（ä¸»é"®）。
+SET NAMES utf8mb4;
+
 CREATE DATABASE IF NOT EXISTS petshop
     DEFAULT CHARACTER SET utf8mb4
     COLLATE utf8mb4_general_ci;
@@ -254,7 +258,7 @@ CREATE TABLE IF NOT EXISTS orders (
     total_amount     DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '商品总额',
     discount_amount  DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '优惠金额(会员折扣+券)',
     pay_amount       DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '实付金额',
-    coupon_id        BIGINT        NOT NULL DEFAULT 0 COMMENT '使用的券id 0=未用',
+    coupon_id        BIGINT        NOT NULL DEFAULT 0 COMMENT '使用的用户券id(user_coupon.id) 0=未用',
     status           TINYINT       NOT NULL DEFAULT 0 COMMENT '状态机: 0待支付 1待发货 2待收货 3待评价 4已完成 -1已取消 -2退款申请中 -3已退款 -4管理员退款',
     prev_status      TINYINT       NULL COMMENT '申请退款前的状态(用于退款被拒后恢复)',
     pay_type         TINYINT       NULL COMMENT '支付方式 1余额 2模拟支付',
@@ -289,7 +293,8 @@ CREATE TABLE IF NOT EXISTS order_item (
     spec          VARCHAR(100)  NULL COMMENT '规格(快照)',
     price         DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '单价(快照)',
     quantity      INT           NOT NULL DEFAULT 1 COMMENT '数量',
-    subtotal      DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '小计',
+    subtotal      DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '小计(price*quantity)',
+    real_pay_amount DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '分摊优惠后实付金额(退款上限)',
     create_time   DATETIME      NULL,
     update_time   DATETIME      NULL,
     deleted       TINYINT       NOT NULL DEFAULT 0,

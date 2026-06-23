@@ -58,13 +58,13 @@ public enum OrderStatus {
 
     static {
         Map<Integer, Set<Integer>> m = new HashMap<>();
-        // 0(待支付) -> 1(已支付) | -1(取消)
+        // 0(待支付) -> 1(待发货) | -1(已取消)
         m.put(0, new HashSet<>(Arrays.asList(1, -1)));
-        // 1(待发货) -> 2(已发货) | -1(取消)
+        // 1(待发货) -> 2(待收货) | -1(已取消)
         m.put(1, new HashSet<>(Arrays.asList(2, -1)));
-        // 2(待收货) -> 3(已收货) | -2(申请退款)
+        // 2(待收货) -> 3(待评价) | -2(退款申请中)
         m.put(2, new HashSet<>(Arrays.asList(3, -2)));
-        // 3(待评价) -> 4(已完成/已评价) | -2(申请退款) | -4(管理员直接退)
+        // 3(待评价) -> 4(已完成) | -2(退款申请中) | -4(管理员退款)
         m.put(3, new HashSet<>(Arrays.asList(4, -2, -4)));
         // -2(退款申请中) -> -3(退款通过) | 2(驳回恢复待收货) | 3(驳回恢复待评价)
         m.put(-2, new HashSet<>(Arrays.asList(-3, 2, 3)));

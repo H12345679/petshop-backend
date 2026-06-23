@@ -21,7 +21,7 @@ public class Order extends BaseEntity {
     private BigDecimal totalAmount;
     private BigDecimal discountAmount;
     private BigDecimal payAmount;
-    /** 使用的券id 0=未用 */
+    /** 使用的用户券id(user_coupon.id) 0=未用 */
     private Long couponId;
     /** 0待支付 1待发货 2待收货 3待评价 4已完成 -1已取消 -2退款申请中 -3已退款 -4管理员退款 */
     private Integer status;
