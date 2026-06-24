@@ -290,7 +290,7 @@ CREATE TABLE IF NOT EXISTS order_item (
     shop_id       BIGINT        NULL COMMENT '商店id(与订单同店)',
     product_name  VARCHAR(100)  NULL COMMENT '商品名(快照)',
     product_image VARCHAR(255)  NULL COMMENT '商品图(快照)',
-    spec          VARCHAR(100)  NULL COMMENT '规格(快照)',
+    spec_name     VARCHAR(100)  NULL COMMENT '规格(快照)',
     price         DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '单价(快照)',
     quantity      INT           NOT NULL DEFAULT 1 COMMENT '数量',
     subtotal      DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '小计(price*quantity)',

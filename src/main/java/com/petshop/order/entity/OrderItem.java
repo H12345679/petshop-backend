@@ -19,7 +19,7 @@ public class OrderItem extends BaseEntity {
     private Long shopId;
     private String productName;
     private String productImage;
-    private String spec;
+    private String specName;
     private BigDecimal price;
     private Integer quantity;
     /** 小计 = price * quantity */
