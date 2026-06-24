@@ -1,4 +1,4 @@
-package com.petshop.shop.entity;
+package com.petshop.product.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.petshop.common.BaseEntity;

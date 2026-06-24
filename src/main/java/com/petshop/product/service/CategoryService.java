@@ -1,7 +1,7 @@
-package com.petshop.shop.service;
+package com.petshop.product.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
-import com.petshop.shop.entity.ProductCategory;
+import com.petshop.product.entity.ProductCategory;
 
 import java.util.List;
 
