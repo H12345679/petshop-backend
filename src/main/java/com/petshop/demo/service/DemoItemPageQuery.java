@@ -1,4 +1,4 @@
-package com.petshop.controller.demo;
+package com.petshop.demo.service;
 
 import com.petshop.common.PageQuery;
 import io.swagger.annotations.ApiModel;

@@ -1,7 +1,8 @@
-package com.petshop.controller.demo;
+package com.petshop.demo.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.petshop.common.PageResult;
+import com.petshop.demo.entity.DemoItem;
 
 /**
  * 演示 Service 接口。

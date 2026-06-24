@@ -15,6 +15,6 @@
  *   &#64;Service
  *   public class FavoriteServiceImpl extends ServiceImpl&lt;FavoriteMapper, Favorite&gt; implements FavoriteService { ... }
  * </pre>
- * 参考 {@link com.petshop.controller.demo.DemoItemService} 和 {@link com.petshop.controller.demo.DemoItemServiceImpl}。
+ * 参考 {@link com.petshop.demo.service.DemoItemService} 和 {@link com.petshop.demo.service.impl.DemoItemServiceImpl}。
  */
 package com.petshop.recommend.service;
