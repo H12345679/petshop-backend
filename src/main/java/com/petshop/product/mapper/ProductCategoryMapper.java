@@ -1,7 +1,7 @@
-package com.petshop.shop.mapper;
+package com.petshop.product.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.petshop.shop.entity.ProductCategory;
+import com.petshop.product.entity.ProductCategory;
 import org.apache.ibatis.annotations.Mapper;
 
 @Mapper

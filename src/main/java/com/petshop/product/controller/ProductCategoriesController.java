@@ -1,8 +1,8 @@
-package com.petshop.shop.controller;
+package com.petshop.product.controller;
 
 import com.petshop.common.Result;
-import com.petshop.shop.entity.ProductCategory;
-import com.petshop.shop.service.CategoryService;
+import com.petshop.product.entity.ProductCategory;
+import com.petshop.product.service.CategoryService;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,7 +19,7 @@ import java.util.List;
 @Api(tags = "02-商品分类")
 @RestController
 @RequestMapping("/api/categories")
-public class ShopCategoriesController {
+public class ProductCategoriesController {
 
     @Autowired
     private CategoryService categoryService;

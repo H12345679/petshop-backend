@@ -1,10 +1,10 @@
-package com.petshop.shop.service.impl;
+package com.petshop.product.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.petshop.shop.entity.ProductCategory;
-import com.petshop.shop.mapper.ProductCategoryMapper;
-import com.petshop.shop.service.CategoryService;
+import com.petshop.product.entity.ProductCategory;
+import com.petshop.product.mapper.ProductCategoryMapper;
+import com.petshop.product.service.CategoryService;
 
 import org.springframework.stereotype.Service;
 
