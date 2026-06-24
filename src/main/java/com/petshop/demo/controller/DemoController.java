@@ -1,11 +1,11 @@
-package com.petshop.controller;
+package com.petshop.demo.controller;
 
 import com.petshop.common.BusinessException;
 import com.petshop.common.PageResult;
 import com.petshop.common.Result;
-import com.petshop.controller.demo.DemoItem;
-import com.petshop.controller.demo.DemoItemPageQuery;
-import com.petshop.controller.demo.DemoItemService;
+import com.petshop.demo.entity.DemoItem;
+import com.petshop.demo.service.DemoItemPageQuery;
+import com.petshop.demo.service.DemoItemService;
 import com.petshop.security.JwtUtil;
 import com.petshop.security.RequireLogin;
 import com.petshop.security.RequireRole;
