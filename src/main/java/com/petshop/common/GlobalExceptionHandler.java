@@ -1,6 +1,7 @@
 package com.petshop.common;
 
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -10,9 +11,11 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 /**
  * 全局异常处理：把各种异常统一转成 Result，避免把堆栈直接暴露给前端。
  */
-@Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
 
     /** 业务异常 */
     @ExceptionHandler(BusinessException.class)
