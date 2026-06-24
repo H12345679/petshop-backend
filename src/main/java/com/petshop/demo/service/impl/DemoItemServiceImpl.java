@@ -1,9 +1,13 @@
-package com.petshop.controller.demo;
+package com.petshop.demo.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.petshop.common.PageResult;
+import com.petshop.demo.entity.DemoItem;
+import com.petshop.demo.service.DemoItemPageQuery;
+import com.petshop.demo.mapper.DemoItemMapper;
+import com.petshop.demo.service.DemoItemService;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 

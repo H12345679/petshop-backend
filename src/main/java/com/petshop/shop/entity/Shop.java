@@ -5,6 +5,7 @@ import com.petshop.common.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import javax.validation.constraints.NotBlank;
 import java.math.BigDecimal;
 
 /** 商店 */
@@ -13,6 +14,7 @@ import java.math.BigDecimal;
 @TableName("shop")
 public class Shop extends BaseEntity {
 
+    @NotBlank(message = "商店名称不能为空")
     private String name;
     private String description;
     private String phone;
