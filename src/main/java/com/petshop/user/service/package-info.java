@@ -16,6 +16,6 @@
  *   &#64;Service
  *   public class UserServiceImpl extends ServiceImpl&lt;UserMapper, User&gt; implements UserService { ... }
  * </pre>
- * 参考 {@link com.petshop.demo.service.DemoItemService} 和 {@link com.petshop.demo.service.impl.DemoItemServiceImpl}。
+ * 参考 {@link com.petshop.controller.demo.DemoItemService} 和 {@link com.petshop.controller.demo.DemoItemServiceImpl}。
  */
 package com.petshop.user.service;
