@@ -6,7 +6,9 @@ import com.petshop.content.dto.VideoCreateDTO;
 import com.petshop.content.dto.VideoPageQuery;
 import com.petshop.content.entity.Video;
 import com.petshop.content.service.VideoService;
+import com.petshop.content.vo.VideoDetailVO;
 import com.petshop.file.QiniuService;
+import com.petshop.security.RequireLogin;
 import com.petshop.security.RequireRole;
 import com.petshop.security.UserContext;
 import io.swagger.annotations.Api;
@@ -82,9 +84,9 @@ public class VideoController {
 
     // ==================== E2 - 视频详情（公开，播放量+1） ====================
 
-    @ApiOperation("视频详情（播放量自动+1）")
+    @ApiOperation("视频详情（播放量自动+1，含关联商品名称/图片/价格，用于播放页'可跳商品'功能）")
     @GetMapping("/{id}")
-    public Result<Video> getVideo(
+    public Result<VideoDetailVO> getVideo(
             @ApiParam(value = "视频ID", required = true) @PathVariable Long id) {
         return Result.success(videoService.getVideoAndIncrViews(id));
     }
