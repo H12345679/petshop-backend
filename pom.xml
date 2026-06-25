@@ -23,7 +23,7 @@
         <druid.version>1.2.20</druid.version>
         <knife4j.version>4.4.0</knife4j.version>
         <jjwt.version>0.11.5</jjwt.version>
-        <lombok.version>1.18.30</lombok.version>
+        <lombok.version>1.18.46</lombok.version>
     </properties>
 
     <dependencies>
@@ -158,8 +158,7 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
-                    <source>${java.version}</source>
-                    <target>${java.version}</target>
+                    <release>${java.version}</release>
                     <annotationProcessorPaths>
                         <path>
                             <groupId>org.projectlombok</groupId>
