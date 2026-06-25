@@ -8,6 +8,7 @@ import com.petshop.product.service.ProductService;
 import com.petshop.security.RequireRole;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
+import com.petshop.common.annotation.TrackBehavior;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -34,6 +35,7 @@ public class ProductController {
     }
 
     @ApiOperation("商品详情查询（公开，核心接口）")
+    @TrackBehavior(type = 1, productIdSpEL = "#id")
     @GetMapping("/{id}")
     public Result<Product> getProduct(@PathVariable Long id) {
         return Result.success(productService.getProductById(id));

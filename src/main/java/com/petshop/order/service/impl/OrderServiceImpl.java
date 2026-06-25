@@ -23,6 +23,8 @@ import com.petshop.user.entity.Address;
 import com.petshop.user.entity.User;
 import com.petshop.user.mapper.AddressMapper;
 import com.petshop.user.mapper.UserMapper;
+import com.petshop.content.entity.UserBehavior;
+import com.petshop.content.mapper.UserBehaviorMapper;
 import com.petshop.util.RedisUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -51,6 +53,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     private OrderItemMapper orderItemMapper;
     @Autowired
     private OrderStatusLogMapper orderStatusLogMapper;
+    @Autowired
+    private UserBehaviorMapper userBehaviorMapper;
     @Autowired
     private CouponMapper couponMapper;
     @Autowired
@@ -445,6 +449,18 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
         // 状态日志
         saveStatusLog(order.getId(), from, 1, userId, "USER", "用户支付");
+
+        // 记录购买行为埋点 (4购买)
+        LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
+        oiWrapper.eq(OrderItem::getOrderId, orderId);
+        List<OrderItem> items = orderItemMapper.selectList(oiWrapper);
+        for (OrderItem item : items) {
+            UserBehavior behavior = new UserBehavior();
+            behavior.setUserId(userId);
+            behavior.setProductId(item.getProductId());
+            behavior.setBehaviorType(4);
+            userBehaviorMapper.insert(behavior);
+        }
     }
 
     @Override
