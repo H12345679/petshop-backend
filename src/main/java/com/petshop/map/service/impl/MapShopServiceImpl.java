@@ -1,6 +1,10 @@
 package com.petshop.map.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.petshop.common.BusinessException;
+import com.petshop.map.dto.MapDistanceQuery;
+import com.petshop.map.dto.MapDistanceResponse;
 import com.petshop.map.dto.MapShopQuery;
 import com.petshop.map.dto.MapShopResponse;
 import com.petshop.map.service.MapShopService;
@@ -49,6 +53,54 @@ public class MapShopServiceImpl implements MapShopService {
                 .sorted(Comparator.comparing(MapShopResponse::getDistanceKm))
                 .limit(limit)
                 .collect(Collectors.toList());
+    }
+
+    @Override
+    public MapShopResponse getShopLocation(Long shopId) {
+        Shop shop = shopMapper.selectOne(new LambdaQueryWrapper<Shop>()
+                .eq(Shop::getId, shopId)
+                .eq(Shop::getStatus, 1));
+        if (shop == null) {
+            throw new BusinessException("商店不存在或已停业");
+        }
+        if (shop.getLongitude() == null || shop.getLatitude() == null) {
+            throw new BusinessException("该商店未标注位置");
+        }
+        MapShopResponse response = new MapShopResponse();
+        response.setId(shop.getId());
+        response.setName(shop.getName());
+        response.setPhone(shop.getPhone());
+        response.setLogo(shop.getLogo());
+        response.setLongitude(shop.getLongitude());
+        response.setLatitude(shop.getLatitude());
+        response.setAddress(fullAddress(shop));
+        response.setDistanceKm(BigDecimal.ZERO);
+        return response;
+    }
+
+    @Override
+    public MapDistanceResponse calcDistance(MapDistanceQuery query) {
+        double fromLon = query.getFromLongitude().doubleValue();
+        double fromLat = query.getFromLatitude().doubleValue();
+        double toLon = query.getToLongitude().doubleValue();
+        double toLat = query.getToLatitude().doubleValue();
+
+        double km = distanceKm(fromLat, fromLon, toLat, toLon);
+        BigDecimal distance = BigDecimal.valueOf(km).setScale(2, RoundingMode.HALF_UP);
+
+        // 驾车按城市道路均速30km/h，步行按5km/h
+        int driveMinutes = (int) Math.ceil(km / 30.0 * 60);
+        int walkMinutes = (int) Math.ceil(km / 5.0 * 60);
+
+        MapDistanceResponse response = new MapDistanceResponse();
+        response.setFromLongitude(query.getFromLongitude());
+        response.setFromLatitude(query.getFromLatitude());
+        response.setToLongitude(query.getToLongitude());
+        response.setToLatitude(query.getToLatitude());
+        response.setDistanceKm(distance);
+        response.setEstimatedMinutes(driveMinutes);
+        response.setWalkingMinutes(walkMinutes);
+        return response;
     }
 
     private MapShopResponse toResponse(Shop shop, double longitude, double latitude) {
