@@ -119,6 +119,10 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         // limit 兜底 + 上限，防止前端传 0 或超大值
         int n = (limit == null || limit <= 0) ? 6 : Math.min(limit, 50);
 
+//        if ("RECOMMEND".equalsIgnoreCase(strategy)) {
+//            return recommendProducts(n);
+//        }
+
         LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
         w.eq(Product::getStatus, 1);   // 首页只展示「上架」商品
         if ("NEW".equalsIgnoreCase(strategy)) {

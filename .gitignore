@@ -21,3 +21,6 @@ logs/
 Thumbs.db
 
 HELP.md
+
+# 本机私有配置（七牛真实密钥等，绝不提交到仓库）
+application-local.yml
