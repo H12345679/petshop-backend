@@ -29,16 +29,14 @@ public class FileController {
     private QiniuService qiniuService;
 
     @ApiOperation("上传图片（商品主图/图册/SKU 图），返回可访问 URL")
-    // TODO 测试用·临时免鉴权（免 token 直接传）；验证七牛通过后请恢复这行 @RequireRole！
-    // @RequireRole({"ADMIN", "MERCHANT"})
+    @RequireRole({"ADMIN", "MERCHANT"})
     @PostMapping("/image")
     public Result<Map<String, String>> uploadImage(@RequestParam("file") MultipartFile file) {
         return Result.success(wrap(qiniuService.upload(file, "images")));
     }
 
     @ApiOperation("上传视频，返回可访问 URL")
-    // TODO 测试用·临时免鉴权（免 token 直接传）；验证七牛通过后请恢复这行 @RequireRole！
-    // @RequireRole({"ADMIN", "MERCHANT"})
+    @RequireRole({"ADMIN", "MERCHANT"})
     @PostMapping("/video")
     public Result<Map<String, String>> uploadVideo(@RequestParam("file") MultipartFile file) {
         return Result.success(wrap(qiniuService.upload(file, "videos")));
