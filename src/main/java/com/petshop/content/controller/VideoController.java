@@ -8,7 +8,6 @@ import com.petshop.content.entity.Video;
 import com.petshop.content.service.VideoService;
 import com.petshop.content.vo.VideoDetailVO;
 import com.petshop.file.QiniuService;
-import com.petshop.security.RequireLogin;
 import com.petshop.security.RequireRole;
 import com.petshop.security.UserContext;
 import io.swagger.annotations.Api;
