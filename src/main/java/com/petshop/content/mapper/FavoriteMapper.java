@@ -7,7 +7,6 @@ import com.petshop.product.entity.Product;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
-import java.util.List;
 
 /**
  * 收藏记录 Mapper 接口

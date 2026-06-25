@@ -14,6 +14,7 @@ import com.petshop.product.mapper.ProductSkuMapper;
 import com.petshop.product.service.ProductPageQuery;
 import com.petshop.product.service.ProductService;
 import com.petshop.security.OwnershipChecker;
+import com.petshop.security.UserContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -119,9 +120,9 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         // limit 兜底 + 上限，防止前端传 0 或超大值
         int n = (limit == null || limit <= 0) ? 6 : Math.min(limit, 50);
 
-//        if ("RECOMMEND".equalsIgnoreCase(strategy)) {
-//            return recommendProducts(n);
-//        }
+        if ("RECOMMEND".equalsIgnoreCase(strategy)) {
+            return recommendProducts(n);
+        }
 
         LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
         w.eq(Product::getStatus, 1);   // 首页只展示「上架」商品
@@ -133,5 +134,25 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         }
         // 取前 N 条：复用分页，要第 1 页、每页 n 条，拿 records（不写裸 LIMIT SQL）
         return this.page(new Page<>(1, n), w).getRecords();
+    }
+
+    private List<Product> recommendProducts(int n) {
+        // 取当前登录用户 id；为空（未登录）→ 没有个性化数据，直接 return homeProducts("HOT", n);
+        if(UserContext.getUserId()==null){
+            return homeProducts("hot",n);
+        }
+        // 查推荐结果：RecommendResultMapper 按 user_id 查、score 降序，
+        // 取出 product_id 列表（建议多取些，如 n*2，给「下架过滤 + 去重」留余量）。
+
+
+        // 用这批 product_id 批量查 product（只要 status=1 上架的）；
+        // 注意：IN 查询返回的顺序 ≠ 推荐顺序，需要自己按 product_id 列表重新排序。
+
+        // 不足 n 条（冷启动/新用户）→ 用热销 homeProducts("HOT", n) 去重补足到 n。
+
+        // （可选·营销加权）把「正在促销 / 有可领券」的商品适当置顶——依赖营销策略输出。
+
+        // 未实现前，先整体回退热销：保证接口可用、且符合第一阶段约定 ——
+        return homeProducts("HOT", n);
     }
 }
