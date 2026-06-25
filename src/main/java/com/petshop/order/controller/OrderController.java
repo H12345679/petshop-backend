@@ -1,0 +1,114 @@
+package com.petshop.order.controller;
+
+import com.petshop.common.PageResult;
+import com.petshop.common.Result;
+import com.petshop.order.service.OrderService;
+import com.petshop.security.RequireLogin;
+import com.petshop.security.RequireRole;
+import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiOperation;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 订单接口（对应《项目接口设计文档》C 模块第 10~17 节）。
+ */
+@Api(tags = "06-订单")
+@RestController
+@RequestMapping("/api/orders")
+public class OrderController {
+
+    @Autowired
+    private OrderService orderService;
+
+    // ==================== 前台 ====================
+
+    @ApiOperation("结算预览（金额试算，不创建订单）")
+    @RequireLogin
+    @PostMapping("/pre-settle")
+    public Result<Map<String, Object>> preSettle(@RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> items = (List<Map<String, Object>>) body.get("items");
+        Long couponId = body.get("couponId") != null
+                ? Long.valueOf(body.get("couponId").toString()) : 0L;
+        Long addressId = body.get("addressId") != null
+                ? Long.valueOf(body.get("addressId").toString()) : 0L;
+        return Result.success(orderService.preSettle(items, couponId, addressId));
+    }
+
+    @ApiOperation("创建订单（跨店自动拆单 + 幂等防重）")
+    @RequireLogin
+    @PostMapping
+    public Result<Map<String, Object>> create(@RequestBody Map<String, Object> body) {
+        String requestId = (String) body.get("requestId");
+        Long couponId = body.get("couponId") != null
+                ? Long.valueOf(body.get("couponId").toString()) : 0L;
+        Long addressId = body.get("addressId") != null
+                ? Long.valueOf(body.get("addressId").toString()) : 0L;
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> items = (List<Map<String, Object>>) body.get("items");
+        return Result.success(orderService.createOrder(requestId, couponId, addressId, items));
+    }
+
+    @ApiOperation("我的订单列表（分页）")
+    @RequireLogin
+    @GetMapping("/my")
+    public Result<PageResult<Map<String, Object>>> myOrders(
+            @RequestParam(defaultValue = "1") Integer current,
+            @RequestParam(defaultValue = "10") Integer size,
+            @RequestParam(required = false) Integer status) {
+        return Result.success(orderService.myOrders(current, size, status));
+    }
+
+    @ApiOperation("模拟支付（余额扣款，仅 0→1）")
+    @RequireLogin
+    @PutMapping("/{id}/pay")
+    public Result<Void> pay(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        Integer payType = body.get("payType") != null
+                ? Integer.valueOf(body.get("payType").toString()) : 1;
+        orderService.pay(id, payType);
+        return Result.success();
+    }
+
+    @ApiOperation("取消订单（仅 0/1→-1，回滚库存/优惠券/余额）")
+    @RequireLogin
+    @PutMapping("/{id}/cancel")
+    public Result<Void> cancel(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        String reason = body.get("cancelReason") != null ? body.get("cancelReason").toString() : "用户取消";
+        orderService.cancel(id, reason);
+        return Result.success();
+    }
+
+    @ApiOperation("商家发货（ADMIN/MERCHANT，1→2）")
+    @RequireRole({"ADMIN", "MERCHANT"})
+    @PutMapping("/{id}/ship")
+    public Result<Void> ship(@PathVariable Long id) {
+        orderService.ship(id);
+        return Result.success();
+    }
+
+    @ApiOperation("用户确认收货（2→3）")
+    @RequireLogin
+    @PutMapping("/{id}/receive")
+    public Result<Void> receive(@PathVariable Long id) {
+        orderService.receive(id);
+        return Result.success();
+    }
+
+    // ==================== 后台 ====================
+
+    @ApiOperation("后台订单管理列表（ADMIN·MERCHANT）")
+    @RequireRole({"ADMIN", "MERCHANT"})
+    @GetMapping("/manage")
+    public Result<PageResult<Map<String, Object>>> manage(
+            @RequestParam(defaultValue = "1") Integer current,
+            @RequestParam(defaultValue = "10") Integer size,
+            @RequestParam(required = false) Long shopId,
+            @RequestParam(required = false) String orderNo,
+            @RequestParam(required = false) Integer status) {
+        return Result.success(orderService.manageOrders(current, size, shopId, orderNo, status));
+    }
+}
