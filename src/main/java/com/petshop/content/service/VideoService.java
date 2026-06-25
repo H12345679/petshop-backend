@@ -5,6 +5,7 @@ import com.petshop.common.PageResult;
 import com.petshop.content.dto.VideoCreateDTO;
 import com.petshop.content.dto.VideoPageQuery;
 import com.petshop.content.entity.Video;
+import com.petshop.content.vo.VideoDetailVO;
 
 /**
  * 视频模块 Service 接口（E 模块 - E2 视频接口）
@@ -33,12 +34,12 @@ public interface VideoService extends IService<Video> {
     PageResult<Video> pageVideos(VideoPageQuery query);
 
     /**
-     * 获取视频详情，并将播放量 +1
+     * 获取视频详情（含关联商品基本信息），并将播放量 +1
      *
      * @param id 视频ID
-     * @return Video 实体
+     * @return VideoDetailVO（含 productName / productMainImage / productPrice，无关联商品时为 null）
      */
-    Video getVideoAndIncrViews(Long id);
+    VideoDetailVO getVideoAndIncrViews(Long id);
 
     /**
      * 更新视频元数据
