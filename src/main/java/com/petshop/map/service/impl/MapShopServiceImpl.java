@@ -1,15 +1,14 @@
 package com.petshop.map.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.petshop.common.BusinessException;
 import com.petshop.map.dto.MapDistanceQuery;
 import com.petshop.map.dto.MapDistanceResponse;
 import com.petshop.map.dto.MapShopQuery;
 import com.petshop.map.dto.MapShopResponse;
+import com.petshop.map.entity.MapShop;
+import com.petshop.map.mapper.MapShopMapper;
 import com.petshop.map.service.MapShopService;
-import com.petshop.shop.entity.Shop;
-import com.petshop.shop.mapper.ShopMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -25,10 +24,10 @@ public class MapShopServiceImpl implements MapShopService {
 
     private static final double EARTH_RADIUS_KM = 6371.0088;
 
-    private final ShopMapper shopMapper;
+    private final MapShopMapper mapShopMapper;
 
-    public MapShopServiceImpl(ShopMapper shopMapper) {
-        this.shopMapper = shopMapper;
+    public MapShopServiceImpl(MapShopMapper mapShopMapper) {
+        this.mapShopMapper = mapShopMapper;
     }
 
     @Override
@@ -39,14 +38,14 @@ public class MapShopServiceImpl implements MapShopService {
         int limit = query.getLimit();
 
         BoundingBox box = buildBoundingBox(longitude, latitude, radius);
-        LambdaQueryWrapper<Shop> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(Shop::getStatus, 1)
-                .isNotNull(Shop::getLongitude)
-                .isNotNull(Shop::getLatitude)
-                .between(Shop::getLongitude, box.minLongitude, box.maxLongitude)
-                .between(Shop::getLatitude, box.minLatitude, box.maxLatitude);
+        LambdaQueryWrapper<MapShop> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(MapShop::getStatus, 1)
+                .isNotNull(MapShop::getLongitude)
+                .isNotNull(MapShop::getLatitude)
+                .between(MapShop::getLongitude, box.minLongitude, box.maxLongitude)
+                .between(MapShop::getLatitude, box.minLatitude, box.maxLatitude);
 
-        return shopMapper.selectList(wrapper).stream()
+        return mapShopMapper.selectList(wrapper).stream()
                 .map(shop -> toResponse(shop, longitude, latitude))
                 .filter(Objects::nonNull)
                 .filter(shop -> shop.getDistanceKm().doubleValue() <= radius)
@@ -57,9 +56,9 @@ public class MapShopServiceImpl implements MapShopService {
 
     @Override
     public MapShopResponse getShopLocation(Long shopId) {
-        Shop shop = shopMapper.selectOne(new LambdaQueryWrapper<Shop>()
-                .eq(Shop::getId, shopId)
-                .eq(Shop::getStatus, 1));
+        MapShop shop = mapShopMapper.selectOne(new LambdaQueryWrapper<MapShop>()
+                .eq(MapShop::getId, shopId)
+                .eq(MapShop::getStatus, 1));
         if (shop == null) {
             throw new BusinessException("商店不存在或已停业");
         }
@@ -103,7 +102,7 @@ public class MapShopServiceImpl implements MapShopService {
         return response;
     }
 
-    private MapShopResponse toResponse(Shop shop, double longitude, double latitude) {
+    private MapShopResponse toResponse(MapShop shop, double longitude, double latitude) {
         if (shop.getLongitude() == null || shop.getLatitude() == null) {
             return null;
         }
@@ -149,7 +148,7 @@ public class MapShopServiceImpl implements MapShopService {
         return EARTH_RADIUS_KM * c;
     }
 
-    private String fullAddress(Shop shop) {
+    private String fullAddress(MapShop shop) {
         StringBuilder address = new StringBuilder();
         append(address, shop.getProvince());
         append(address, shop.getCity());
