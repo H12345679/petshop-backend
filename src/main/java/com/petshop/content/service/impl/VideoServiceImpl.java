@@ -10,6 +10,13 @@ import com.petshop.content.dto.VideoPageQuery;
 import com.petshop.content.entity.Video;
 import com.petshop.content.mapper.VideoMapper;
 import com.petshop.content.service.VideoService;
+import com.petshop.content.vo.VideoDetailVO;
+import com.petshop.product.entity.Product;
+import com.petshop.product.service.ProductService;
+import com.petshop.shop.entity.Shop;
+import com.petshop.shop.service.ShopService;
+import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -19,9 +26,18 @@ import org.springframework.util.StringUtils;
 @Service
 public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements VideoService {
 
+    @Autowired
+    private ShopService shopService;
+
+    @Autowired
+    private ProductService productService;
+
     @Override
     public Video createVideo(VideoCreateDTO dto, Long loginUserId, String role) {
-        // MERCHANT 只能为自己名下店铺上传视频（shopId 归属校验由 Controller 层传入，这里直接信任）
+        // MERCHANT 创建视频时，校验 shopId 是否属于本人名下
+        if ("MERCHANT".equals(role)) {
+            checkShopOwnership(dto.getShopId(), loginUserId);
+        }
         Video video = new Video();
         video.setTitle(dto.getTitle());
         video.setCover(dto.getCover());
@@ -49,7 +65,7 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
     }
 
     @Override
-    public Video getVideoAndIncrViews(Long id) {
+    public VideoDetailVO getVideoAndIncrViews(Long id) {
         Video video = getById(id);
         if (video == null) {
             throw new BusinessException(404, "视频不存在：" + id);
@@ -60,7 +76,22 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
         update.setViews(video.getViews() + 1);
         updateById(update);
         video.setViews(video.getViews() + 1);
-        return video;
+
+        // 组装 VO
+        VideoDetailVO vo = new VideoDetailVO();
+        BeanUtils.copyProperties(video, vo);
+
+        // 关联商品信息：productId > 0 时查询商品基本信息，供前端"可跳商品"展示
+        if (video.getProductId() != null && video.getProductId() > 0) {
+            Product product = productService.getById(video.getProductId());
+            if (product != null) {
+                vo.setProductName(product.getName());
+                vo.setProductMainImage(product.getMainImage());
+                vo.setProductPrice(product.getPrice());
+                vo.setProductStatus(product.getStatus());
+            }
+        }
+        return vo;
     }
 
     @Override
@@ -69,23 +100,19 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
         if (existing == null) {
             throw new BusinessException(404, "视频不存在：" + id);
         }
-        // MERCHANT 数据归属校验：只能修改本人店铺的视频（A 模块未就绪时暂跳过 shop owner 校验）
-        // 待 A 提供商店接口后，可在此处查询 shop.owner_id 比对 loginUserId
+        // MERCHANT 数据归属校验：通过 shop.owner_id 验证该店铺确实属于当前登录商家
         if ("MERCHANT".equals(role)) {
-            if (!existing.getShopId().equals(dto.getShopId())) {
-                // 如果传入的 shopId 与原视频的 shopId 不一致，直接拒绝（防止越权移店）
-                throw new BusinessException(403, "无权操作该视频");
-            }
+            checkShopOwnership(existing.getShopId(), loginUserId);
         }
         // 只更新非空字段
         Video update = new Video();
         update.setId(id);
-        if (StringUtils.hasText(dto.getTitle()))       update.setTitle(dto.getTitle());
-        if (StringUtils.hasText(dto.getCover()))       update.setCover(dto.getCover());
-        if (StringUtils.hasText(dto.getUrl()))         update.setUrl(dto.getUrl());
-        if (StringUtils.hasText(dto.getDescription())) update.setDescription(dto.getDescription());
-        if (dto.getProductId() != null)                update.setProductId(dto.getProductId());
-        if (dto.getStatus() != null)                   update.setStatus(dto.getStatus());
+        if (StringUtils.hasText(dto.getTitle()))        update.setTitle(dto.getTitle());
+        if (StringUtils.hasText(dto.getCover()))        update.setCover(dto.getCover());
+        if (StringUtils.hasText(dto.getUrl()))          update.setUrl(dto.getUrl());
+        if (StringUtils.hasText(dto.getDescription()))  update.setDescription(dto.getDescription());
+        if (dto.getProductId() != null)                 update.setProductId(dto.getProductId());
+        if (dto.getStatus() != null)                    update.setStatus(dto.getStatus());
         updateById(update);
     }
 
@@ -95,7 +122,29 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
         if (existing == null) {
             throw new BusinessException(404, "视频不存在：" + id);
         }
-        // MERCHANT 只能删本人店铺的视频（简化：这里暂不查 shop owner，待 A 接口就绪后补充）
+        // MERCHANT 只能删本人店铺的视频，通过 shop.owner_id 校验
+        if ("MERCHANT".equals(role)) {
+            checkShopOwnership(existing.getShopId(), loginUserId);
+        }
         removeById(id);
+    }
+
+    /**
+     * 校验店铺归属：查询 shop 表确认 owner_id == loginUserId，不匹配则抛 403。
+     *
+     * @param shopId      视频关联的店铺ID
+     * @param loginUserId 当前登录商家的用户ID
+     */
+    private void checkShopOwnership(Long shopId, Long loginUserId) {
+        if (shopId == null) {
+            throw new BusinessException(400, "店铺ID不能为空");
+        }
+        Shop shop = shopService.getById(shopId);
+        if (shop == null) {
+            throw new BusinessException(404, "店铺不存在：" + shopId);
+        }
+        if (!loginUserId.equals(shop.getOwnerId())) {
+            throw new BusinessException(403, "无权操作该店铺的视频");
+        }
     }
 }

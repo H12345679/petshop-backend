@@ -1,30 +1,25 @@
-package com.petshop.controller;
+package com.petshop.content.controller;
 
-import com.petshop.common.BusinessException;
 import com.petshop.common.PageResult;
 import com.petshop.common.Result;
 import com.petshop.content.dto.VideoCreateDTO;
 import com.petshop.content.dto.VideoPageQuery;
 import com.petshop.content.entity.Video;
 import com.petshop.content.service.VideoService;
-import com.petshop.security.RequireLogin;
+import com.petshop.content.vo.VideoDetailVO;
+import com.petshop.file.QiniuService;
 import com.petshop.security.RequireRole;
 import com.petshop.security.UserContext;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiParam;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.util.StringUtils;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.File;
-import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * E 模块 - 视频接口（E2）
@@ -48,19 +43,9 @@ public class VideoController {
     @Autowired
     private VideoService videoService;
 
-    /**
-     * 本地文件存储根路径，配置在 application.yml 的 upload.video-path。
-     * 默认值为系统临时目录下的 petshop/videos（开发期可用）。
-     */
-    @Value("${upload.video-path:${java.io.tmpdir}/petshop/videos}")
-    private String videoStoragePath;
-
-    /**
-     * 本地文件访问基准URL（如 http://localhost:8080/files/videos/），
-     * 配置在 application.yml 的 upload.video-url-prefix。
-     */
-    @Value("${upload.video-url-prefix:http://localhost:8080/files/videos/}")
-    private String videoUrlPrefix;
+    /** 七牛云上传服务（视频统一存七牛，与商品图片一致）。 */
+    @Autowired
+    private QiniuService qiniuService;
 
     // ==================== E2 - 视频文件上传 ====================
 
@@ -69,32 +54,11 @@ public class VideoController {
     @PostMapping("/upload")
     public Result<Map<String, String>> uploadVideo(
             @ApiParam(value = "视频文件（mp4/mov 等）", required = true)
-            @RequestParam("file") MultipartFile file) throws IOException {
-
-        if (file.isEmpty()) {
-            throw new BusinessException(400, "上传文件不能为空");
-        }
-        String originalFilename = file.getOriginalFilename();
-        String ext = "";
-        if (StringUtils.hasText(originalFilename) && originalFilename.contains(".")) {
-            ext = originalFilename.substring(originalFilename.lastIndexOf("."));
-        }
-        // 使用 UUID 重命名，防止文件名冲突
-        String newFilename = UUID.randomUUID().toString().replace("-", "") + ext;
-
-        // 确保存储目录存在
-        File dir = new File(videoStoragePath);
-        if (!dir.exists()) {
-            dir.mkdirs();
-        }
-
-        // 存储到本地磁盘
-        File dest = new File(dir, newFilename);
-        file.transferTo(dest);
-
-        String fileUrl = videoUrlPrefix + newFilename;
+            @RequestParam("file") MultipartFile file) {
+        // 直传七牛云（空文件校验、UUID 命名都在 QiniuService 里），返回可访问 URL
+        String url = qiniuService.upload(file, "videos");
         Map<String, String> data = new HashMap<>();
-        data.put("url", fileUrl);
+        data.put("url", url);
         return Result.success("上传成功", data);
     }
 
@@ -119,9 +83,9 @@ public class VideoController {
 
     // ==================== E2 - 视频详情（公开，播放量+1） ====================
 
-    @ApiOperation("视频详情（播放量自动+1）")
+    @ApiOperation("视频详情（播放量自动+1，含关联商品名称/图片/价格，用于播放页'可跳商品'功能）")
     @GetMapping("/{id}")
-    public Result<Video> getVideo(
+    public Result<VideoDetailVO> getVideo(
             @ApiParam(value = "视频ID", required = true) @PathVariable Long id) {
         return Result.success(videoService.getVideoAndIncrViews(id));
     }

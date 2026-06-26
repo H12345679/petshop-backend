@@ -1,9 +1,10 @@
 server:
-  port: 8080
+  port: 8088
 
 spring:
   profiles:
-    active: dev
+    # local 用于放本机私有配置（如七牛真实密钥），见 application-local.yml（已 gitignore，没有也能启动）
+    active: dev,local
   application:
     name: petshop-backend
   # 热启动/热部署：改完代码 Ctrl+F9（IDEA 重新编译）即自动重启
@@ -27,12 +28,14 @@ spring:
       max-file-size: 500MB
       max-request-size: 500MB
 
-# E 模块 - 本地文件存储配置
-# 上传视频存放路径（开发时用本机临时目录，上线可改为 OSS）
-upload:
-  video-path: ${user.home}/petshop/videos
-  # 静态资源访问前缀，需配合 WebMvcConfig 映射本地目录到 /files/**
-  video-url-prefix: http://localhost:8080/files/videos/
+# 七牛云对象存储（商品图片 + 视频，统一存储）。
+# 下面是「占位默认值」：保证没有 application-local.yml 的人也能正常启动（只是上传会失败）。
+# ⚠️ 真实 AccessKey/SecretKey/Bucket/域名 放在 application-local.yml（已 gitignore，不进仓库）里覆盖。
+qiniu:
+  access-key: your-access-key
+  secret-key: your-secret-key
+  bucket: your-bucket
+  domain: http://your-domain
 
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml
