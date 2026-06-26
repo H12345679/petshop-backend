@@ -102,6 +102,17 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         // 条件式：值为 null/空 时该条件不生效（前台一般只传 status=1）
         w.eq(query.getShopId() != null, Product::getShopId, query.getShopId());
 
+        // 多门店 IN 过滤（商家后台用，逗号分隔的 shopIds）
+        if (query.getShopId() == null && StringUtils.hasText(query.getShopIds())) {
+            java.util.List<Long> ids = new java.util.ArrayList<>();
+            for (String s : query.getShopIds().split(",")) {
+                try { ids.add(Long.parseLong(s.trim())); } catch (NumberFormatException ignored) {}
+            }
+            if (!ids.isEmpty()) {
+                w.in(Product::getShopId, ids);
+            }
+        }
+
         w.eq(query.getCategoryId() != null, Product::getCategoryId, query.getCategoryId());
 
         w.like(StringUtils.hasText(query.getName()), Product::getName, query.getName());
