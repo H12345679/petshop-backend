@@ -30,4 +30,13 @@ public class ProductPageQuery extends PageQuery {
 
     @ApiModelProperty(value = "上下架 1上架 0下架")
     private Integer status;
+
+    @ApiModelProperty(value = "最低价")
+    private java.math.BigDecimal minPrice;
+
+    @ApiModelProperty(value = "最高价")
+    private java.math.BigDecimal maxPrice;
+
+    @ApiModelProperty(value = "排序方式: sales_desc, price_asc, price_desc, new (默认)")
+    private String sort;
 }
