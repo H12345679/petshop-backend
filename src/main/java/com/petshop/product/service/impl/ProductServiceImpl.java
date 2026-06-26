@@ -110,8 +110,19 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
 
         w.eq(query.getStatus() != null, Product::getStatus, query.getStatus());
 
-        w.orderByDesc(Product::getCreateTime);
-        
+        w.ge(query.getMinPrice() != null, Product::getPrice, query.getMinPrice());
+        w.le(query.getMaxPrice() != null, Product::getPrice, query.getMaxPrice());
+
+        if ("sales_desc".equals(query.getSort())) {
+            w.orderByDesc(Product::getSales);
+        } else if ("price_asc".equals(query.getSort())) {
+            w.orderByAsc(Product::getPrice);
+        } else if ("price_desc".equals(query.getSort())) {
+            w.orderByDesc(Product::getPrice);
+        } else {
+            w.orderByDesc(Product::getCreateTime);
+        }
+
         return PageResult.of(this.page(query.toPage(), w));
     }
 
