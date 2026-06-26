@@ -22,4 +22,7 @@ public class ShopPageQuery extends PageQuery {
 
     @ApiModelProperty(value = "营业状态 1营业 0停业", example = "1")
     private Integer status;
+
+    @ApiModelProperty(value = "店主ID", example = "1")
+    private Long ownerId;
 }

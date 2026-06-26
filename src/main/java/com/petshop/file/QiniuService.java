@@ -51,8 +51,10 @@ public class QiniuService {
             if (!res.isOK()) {
                 throw new BusinessException("七牛上传失败：" + res.bodyString());
             }
-            // 4) 返回最终可访问 URL = 域名 + / + key
-            return qiniuConfig.getDomain() + "/" + key;
+            // 4) 返回带签名的私有访问 URL（有效期 1 年）
+            String baseUrl = qiniuConfig.getDomain() + "/" + key;
+            long expireInSeconds = 3600 * 24 * 365; // 1年
+            return auth.privateDownloadUrl(baseUrl, expireInSeconds);
         } catch (QiniuException e) {
             throw new BusinessException("七牛上传异常：" + e.getMessage());
         } catch (IOException e) {

@@ -16,8 +16,11 @@ import lombok.EqualsAndHashCode;
 @ApiModel("商品列表分页搜索参数")
 public class ProductPageQuery extends PageQuery {
 
-    @ApiModelProperty(value = "按门店过滤", example = "180479302948019283")
+    @ApiModelProperty(value = "按单个门店过滤", example = "180479302948019283")
     private Long shopId;
+
+    @ApiModelProperty(value = "按多个门店过滤（逗号分隔）", example = "1,2,3")
+    private String shopIds;
 
     @ApiModelProperty(value = "按分类过滤")
     private Long categoryId;
