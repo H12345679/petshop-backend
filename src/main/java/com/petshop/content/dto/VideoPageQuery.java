@@ -25,4 +25,7 @@ public class VideoPageQuery extends PageQuery {
 
     @ApiModelProperty("视频状态：1上架 0下架（可选，不传则查全部）")
     private Integer status;
+
+    @ApiModelProperty("商品分类ID（用于根据视频关联的商品来进行分类）")
+    private Long productCategoryId;
 }
