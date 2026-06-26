@@ -177,4 +177,57 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         // 未实现前，先整体回退热销：保证接口可用、且符合第一阶段约定 ——
         return homeProducts("HOT", n);
     }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public java.math.BigDecimal checkPriceAndDeductStock(Long productId, Long skuId, Integer quantity) {
+        if (quantity == null || quantity <= 0) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "购买数量必须大于0");
+        }
+        Product product = this.getById(productId);
+        if (product == null || product.getStatus() != 1) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "商品不存在或已下架");
+        }
+
+        if (skuId != null) {
+            // 有 SKU
+            ProductSku sku = productSkuMapper.selectById(skuId);
+            if (sku == null || !sku.getProductId().equals(productId)) {
+                throw new BusinessException(ResultCode.NOT_FOUND, "商品规格不存在");
+            }
+            if (sku.getStock() < quantity) {
+                throw new BusinessException(ResultCode.ERROR, "商品规格库存不足");
+            }
+            // 乐观锁思想扣减库存
+            int updated = productSkuMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ProductSku>()
+                    .setSql("stock = stock - " + quantity)
+                    .eq(ProductSku::getId, skuId)
+                    .ge(ProductSku::getStock, quantity));
+            if (updated == 0) {
+                throw new BusinessException(ResultCode.ERROR, "库存扣减失败，已被抢空请重试");
+            }
+            return sku.getPrice();
+        } else {
+            // 无 SKU，扣减主表库存
+            if (product.getStock() < quantity) {
+                throw new BusinessException(ResultCode.ERROR, "商品库存不足");
+            }
+            int updated = this.baseMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Product>()
+                    .setSql("stock = stock - " + quantity)
+                    .eq(Product::getId, productId)
+                    .ge(Product::getStock, quantity));
+            if (updated == 0) {
+                throw new BusinessException(ResultCode.ERROR, "库存扣减失败，已被抢空请重试");
+            }
+            return product.getPrice();
+        }
+    }
+
+    @Override
+    public List<Product> getAllActiveProductsForRecommend() {
+        LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
+        w.eq(Product::getStatus, 1);
+        w.select(Product::getId, Product::getCategoryId, Product::getName, Product::getSales);
+        return this.list(w);
+    }
 }
