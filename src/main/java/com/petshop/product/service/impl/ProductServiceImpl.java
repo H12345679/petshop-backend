@@ -182,21 +182,21 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     @Transactional(rollbackFor = Exception.class)
     public java.math.BigDecimal checkPriceAndDeductStock(Long productId, Long skuId, Integer quantity) {
         if (quantity == null || quantity <= 0) {
-            throw new BusinessException(ResultCode.PARAM_ERROR, "购买数量必须大于0");
+            throw new BusinessException(ResultCode.PARAM_ERROR.getCode(), "购买数量必须大于0");
         }
         Product product = this.getById(productId);
         if (product == null || product.getStatus() != 1) {
-            throw new BusinessException(ResultCode.NOT_FOUND, "商品不存在或已下架");
+            throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "商品不存在或已下架");
         }
 
         if (skuId != null) {
             // 有 SKU
             ProductSku sku = productSkuMapper.selectById(skuId);
             if (sku == null || !sku.getProductId().equals(productId)) {
-                throw new BusinessException(ResultCode.NOT_FOUND, "商品规格不存在");
+                throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "商品规格不存在");
             }
             if (sku.getStock() < quantity) {
-                throw new BusinessException(ResultCode.ERROR, "商品规格库存不足");
+                throw new BusinessException(ResultCode.ERROR.getCode(), "商品规格库存不足");
             }
             // 乐观锁思想扣减库存
             int updated = productSkuMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ProductSku>()
@@ -204,20 +204,20 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
                     .eq(ProductSku::getId, skuId)
                     .ge(ProductSku::getStock, quantity));
             if (updated == 0) {
-                throw new BusinessException(ResultCode.ERROR, "库存扣减失败，已被抢空请重试");
+                throw new BusinessException(ResultCode.ERROR.getCode(), "库存扣减失败，已被抢空请重试");
             }
             return sku.getPrice();
         } else {
             // 无 SKU，扣减主表库存
             if (product.getStock() < quantity) {
-                throw new BusinessException(ResultCode.ERROR, "商品库存不足");
+                throw new BusinessException(ResultCode.ERROR.getCode(), "商品库存不足");
             }
             int updated = this.baseMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Product>()
                     .setSql("stock = stock - " + quantity)
                     .eq(Product::getId, productId)
                     .ge(Product::getStock, quantity));
             if (updated == 0) {
-                throw new BusinessException(ResultCode.ERROR, "库存扣减失败，已被抢空请重试");
+                throw new BusinessException(ResultCode.ERROR.getCode(), "库存扣减失败，已被抢空请重试");
             }
             return product.getPrice();
         }
