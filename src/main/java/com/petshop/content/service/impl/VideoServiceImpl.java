@@ -13,12 +13,13 @@ import com.petshop.content.service.VideoService;
 import com.petshop.content.vo.VideoDetailVO;
 import com.petshop.product.entity.Product;
 import com.petshop.product.service.ProductService;
-import com.petshop.shop.entity.Shop;
-import com.petshop.shop.service.ShopService;
+import com.petshop.security.OwnershipChecker;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+
+import java.util.List;
 
 /**
  * 视频模块 Service 实现（E 模块 - E2）
@@ -27,17 +28,15 @@ import org.springframework.util.StringUtils;
 public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements VideoService {
 
     @Autowired
-    private ShopService shopService;
+    private ProductService productService;
 
     @Autowired
-    private ProductService productService;
+    private OwnershipChecker ownershipChecker;
 
     @Override
     public Video createVideo(VideoCreateDTO dto, Long loginUserId, String role) {
         // MERCHANT 创建视频时，校验 shopId 是否属于本人名下
-        if ("MERCHANT".equals(role)) {
-            checkShopOwnership(dto.getShopId(), loginUserId);
-        }
+        ownershipChecker.assertShopOwned(dto.getShopId());
         Video video = new Video();
         video.setTitle(dto.getTitle());
         video.setCover(dto.getCover());
@@ -61,6 +60,17 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
                 .eq(query.getShopId() != null, Video::getShopId, query.getShopId())
                 .eq(query.getStatus() != null, Video::getStatus, query.getStatus())
                 .orderByDesc(Video::getCreateTime);
+
+        // MERCHANT 只看自己名下店铺的视频；ADMIN/null/empty 不过滤
+        List<Long> shopIds = ownershipChecker.myShopIds();
+        if (shopIds != null) {
+            if (shopIds.isEmpty()) {
+                wrapper.eq(Video::getShopId, -1L); // MERCHANT 无店铺 → 返回空
+            } else {
+                wrapper.in(Video::getShopId, shopIds);
+            }
+        }
+
         return PageResult.of(page(page, wrapper));
     }
 
@@ -101,9 +111,7 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
             throw new BusinessException(404, "视频不存在：" + id);
         }
         // MERCHANT 数据归属校验：通过 shop.owner_id 验证该店铺确实属于当前登录商家
-        if ("MERCHANT".equals(role)) {
-            checkShopOwnership(existing.getShopId(), loginUserId);
-        }
+        ownershipChecker.assertShopOwned(existing.getShopId());
         // 只更新非空字段
         Video update = new Video();
         update.setId(id);
@@ -123,28 +131,8 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
             throw new BusinessException(404, "视频不存在：" + id);
         }
         // MERCHANT 只能删本人店铺的视频，通过 shop.owner_id 校验
-        if ("MERCHANT".equals(role)) {
-            checkShopOwnership(existing.getShopId(), loginUserId);
-        }
+        ownershipChecker.assertShopOwned(existing.getShopId());
         removeById(id);
     }
 
-    /**
-     * 校验店铺归属：查询 shop 表确认 owner_id == loginUserId，不匹配则抛 403。
-     *
-     * @param shopId      视频关联的店铺ID
-     * @param loginUserId 当前登录商家的用户ID
-     */
-    private void checkShopOwnership(Long shopId, Long loginUserId) {
-        if (shopId == null) {
-            throw new BusinessException(400, "店铺ID不能为空");
-        }
-        Shop shop = shopService.getById(shopId);
-        if (shop == null) {
-            throw new BusinessException(404, "店铺不存在：" + shopId);
-        }
-        if (!loginUserId.equals(shop.getOwnerId())) {
-            throw new BusinessException(403, "无权操作该店铺的视频");
-        }
-    }
 }

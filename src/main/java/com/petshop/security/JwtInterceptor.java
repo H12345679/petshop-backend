@@ -32,36 +32,39 @@ public class JwtInterceptor implements HandlerInterceptor {
         }
         HandlerMethod hm = (HandlerMethod) handler;
 
-        RequireLogin requireLogin = getAnnotation(hm, RequireLogin.class);
-        RequireRole requireRole = getAnnotation(hm, RequireRole.class);
-
-        // 公开接口直接放行
-        if (requireLogin == null && requireRole == null) {
-            return true;
-        }
-
+        // 尝试解析 Token（无论是否强制要求登录，有合法 Token 就把用户信息放入上下文）
         String token = request.getHeader("Authorization");
         if (token != null && token.startsWith("Bearer ")) {
             token = token.substring(7);
         }
-        if (token == null || token.isEmpty()) {
+        if (token != null && !token.isEmpty()) {
+            try {
+                Claims claims = jwtUtil.parseToken(token);
+                Long userId = claims.get("userId") == null ? null : Long.valueOf(claims.get("userId").toString());
+                String username = claims.get("username", String.class);
+                String role = claims.get("role", String.class);
+                UserContext.set(new UserContext.LoginUser(userId, username, role));
+            } catch (Exception e) {
+                // Token 无效：对公开接口宽容（忽略无效 token），对强制登录接口严格
+            }
+        }
+
+        RequireLogin requireLogin = getAnnotation(hm, RequireLogin.class);
+        RequireRole requireRole = getAnnotation(hm, RequireRole.class);
+
+        // 公开接口直接放行（即使无 token / token 无效也放行）
+        if (requireLogin == null && requireRole == null) {
+            return true;
+        }
+
+        // 强制登录接口：必须有合法 token
+        if (UserContext.getUserId() == null) {
             throw new BusinessException(ResultCode.UNAUTHORIZED);
         }
 
-        Claims claims;
-        try {
-            claims = jwtUtil.parseToken(token);
-        } catch (Exception e) {
-            throw new BusinessException(ResultCode.UNAUTHORIZED);
-        }
-
-        Long userId = claims.get("userId") == null ? null : Long.valueOf(claims.get("userId").toString());
-        String username = claims.get("username", String.class);
-        String role = claims.get("role", String.class);
-        UserContext.set(new UserContext.LoginUser(userId, username, role));
-
+        String role = UserContext.getRole();
         if (requireRole != null) {
-            boolean allowed = Arrays.asList(requireRole.value()).contains(role);
+            boolean allowed = role != null && Arrays.asList(requireRole.value()).contains(role);
             if (!allowed) {
                 throw new BusinessException(ResultCode.FORBIDDEN);
             }

@@ -1,14 +1,21 @@
 package com.petshop.user.service.serviceImpl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.petshop.common.BusinessException;
+import com.petshop.common.PageResult;
 import com.petshop.security.JwtUtil;
 import com.petshop.user.entity.User;
 import com.petshop.user.mapper.UserMapper;
+import com.petshop.user.model.dto.ChangePasswordDTO;
 import com.petshop.user.model.dto.LoginDTO;
 import com.petshop.user.model.dto.RegisterDTO;
 import com.petshop.user.model.dto.UpdateUserDTO;
+import com.petshop.user.model.dto.UserRoleDTO;
+import com.petshop.user.model.dto.UserStatusDTO;
 import com.petshop.user.model.vo.LoginVO;
+import com.petshop.user.model.vo.UserManageVO;
 import com.petshop.user.model.vo.UserVO;
 import com.petshop.user.service.UserService;
 import org.springframework.beans.BeanUtils;
@@ -18,6 +25,11 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class UserServiceImpl implements UserService {
@@ -126,9 +138,86 @@ public class UserServiceImpl implements UserService {
         userMapper.updateById(user);
     }
 
+    @Override
+    public void changePassword(Long userId, ChangePasswordDTO dto) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BusinessException("用户不存在");
+        }
+
+        // 校验旧密码
+        if (!passwordEncoder.matches(dto.getOldPassword(), user.getPassword())) {
+            throw new BusinessException(400, "旧密码错误");
+        }
+
+        // 加密新密码并更新
+        user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
+        userMapper.updateById(user);
+    }
+
+    @Override
+    public PageResult<UserManageVO> manageList(int current, int size, String username) {
+        QueryWrapper<User> qw = new QueryWrapper<>();
+        qw.eq("deleted", 0);
+        if (username != null && !username.trim().isEmpty()) {
+            qw.like("username", username.trim());
+        }
+        qw.orderByDesc("create_time");
+
+        Page<User> page = new Page<>(current, size);
+        IPage<User> result = userMapper.selectPage(page, qw);
+
+        List<UserManageVO> records = result.getRecords().stream()
+                .map(this::toManageVO)
+                .collect(Collectors.toList());
+
+        PageResult<UserManageVO> pr = new PageResult<>();
+        pr.setTotal(result.getTotal());
+        pr.setPages(result.getPages());
+        pr.setCurrent(result.getCurrent());
+        pr.setSize(result.getSize());
+        pr.setRecords(records);
+        return pr;
+    }
+
+    @Override
+    public void updateUserStatus(Long userId, UserStatusDTO dto) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BusinessException("用户不存在");
+        }
+
+        user.setStatus(dto.getStatus());
+        userMapper.updateById(user);
+    }
+
+    @Override
+    public void updateUserRole(Long userId, UserRoleDTO dto) {
+        // 校验角色合法性
+        Set<String> validRoles = new HashSet<>(Arrays.asList("USER", "MERCHANT", "ADMIN"));
+        if (!validRoles.contains(dto.getRole())) {
+            throw new BusinessException(400, "无效的角色类型，仅支持 USER / MERCHANT / ADMIN");
+        }
+
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BusinessException("用户不存在");
+        }
+
+        user.setRole(dto.getRole());
+        userMapper.updateById(user);
+    }
+
     /** User 实体 -> UserVO */
     private UserVO toVO(User user) {
         UserVO vo = new UserVO();
+        BeanUtils.copyProperties(user, vo);
+        return vo;
+    }
+
+    /** User 实体 -> UserManageVO */
+    private UserManageVO toManageVO(User user) {
+        UserManageVO vo = new UserManageVO();
         BeanUtils.copyProperties(user, vo);
         return vo;
     }

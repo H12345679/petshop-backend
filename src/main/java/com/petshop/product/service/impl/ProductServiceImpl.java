@@ -99,7 +99,26 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     public PageResult<Product> pageProducts(ProductPageQuery query) {
         LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
         // 条件式：值为 null/空 时该条件不生效（前台一般只传 status=1）
-        w.eq(query.getShopId() != null, Product::getShopId, query.getShopId());
+
+        // MERCHANT 只看自己名下店铺的商品；ADMIN/null 不过滤
+        // 若 query 已指定 shopId，取交集（MERCHANT 只能查自己店铺的）
+        List<Long> shopIds = ownershipChecker.myShopIds();
+        if (shopIds != null && !shopIds.isEmpty()) {
+            if (query.getShopId() != null) {
+                // MERCHANT 指定了 shopId → 必须在名下店铺范围内
+                if (!shopIds.contains(query.getShopId())) {
+                    return new PageResult<>(); // 越权查别人店铺 → 返回空页
+                }
+                w.eq(Product::getShopId, query.getShopId());
+            } else {
+                w.in(Product::getShopId, shopIds);
+            }
+        } else if (shopIds != null) {
+            // MERCHANT 无店铺 → 返回空
+            return new PageResult<>();
+        } else {
+            w.eq(query.getShopId() != null, Product::getShopId, query.getShopId());
+        }
 
         w.eq(query.getCategoryId() != null, Product::getCategoryId, query.getCategoryId());
 
@@ -110,7 +129,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         w.eq(query.getStatus() != null, Product::getStatus, query.getStatus());
 
         w.orderByDesc(Product::getCreateTime);
-        
+
         return PageResult.of(this.page(query.toPage(), w));
     }
 

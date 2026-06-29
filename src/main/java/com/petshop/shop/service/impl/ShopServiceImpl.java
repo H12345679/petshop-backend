@@ -16,6 +16,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.List;
+
 /**
  * 商店 Service 实现。
  * <p>
@@ -77,6 +79,16 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements Sh
         wrapper.like(StringUtils.hasText(query.getName()), Shop::getName, query.getName());
         wrapper.eq(query.getStatus() != null, Shop::getStatus, query.getStatus());
         wrapper.orderByDesc(Shop::getCreateTime);
+
+        // MERCHANT 只看自己名下的店铺；ADMIN/null/empty 不过滤
+        List<Long> shopIds = ownershipChecker.myShopIds();
+        if (shopIds != null) {
+            if (shopIds.isEmpty()) {
+                wrapper.eq(Shop::getId, -1L); // MERCHANT 无店铺 → 返回空
+            } else {
+                wrapper.in(Shop::getId, shopIds);
+            }
+        }
 
         // query.toPage() 自动处理页码与每页上限；page() 是白送的分页方法
         Page<Shop> page = this.page(query.toPage(), wrapper);
