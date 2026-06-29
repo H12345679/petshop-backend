@@ -538,5 +538,5 @@ INSERT IGNORE INTO product_category (id, parent_id, name, sort, create_time, upd
  (4, 0, '宠物用品', 4, NOW(), NOW(), 0);
 
 INSERT IGNORE INTO user (id, username, password, nickname, role, member_level_id, status, create_time, update_time, deleted) VALUES
- (1, 'admin', '$2a$10$7JB720yubVSZvUI0rEqK/.VqGOZTH.ulu33dHOiBE8ByOhJIrdAu2', '管理员', 'ADMIN', 0, 1, NOW(), NOW(), 0),
- (2, 'test',  '$2a$10$7JB720yubVSZvUI0rEqK/.VqGOZTH.ulu33dHOiBE8ByOhJIrdAu2', '测试用户', 'USER', 1, 1, NOW(), NOW(), 0);
+ (1, 'admin', '$2a$12$AYxVk1sMLdm346ln91x8R.pKKCTNGtQWts8mfnefngMD/q0BBnuUC', '管理员', 'ADMIN', 0, 1, NOW(), NOW(), 0),
+ (2, 'test',  '$2a$12$AYxVk1sMLdm346ln91x8R.pKKCTNGtQWts8mfnefngMD/q0BBnuUC', '测试用户', 'USER', 1, 1, NOW(), NOW(), 0);
