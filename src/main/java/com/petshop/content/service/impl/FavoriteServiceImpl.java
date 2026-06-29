@@ -19,9 +19,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class FavoriteServiceImpl extends ServiceImpl<FavoriteMapper, Favorite> implements FavoriteService {
 
-    @Autowired
-    private UserBehaviorMapper userBehaviorMapper;
-
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void addFavorite(Long productId) {
@@ -44,13 +41,6 @@ public class FavoriteServiceImpl extends ServiceImpl<FavoriteMapper, Favorite> i
         favorite.setUserId(userId);
         favorite.setProductId(productId);
         this.baseMapper.insert(favorite);
-
-        // 记录用户行为 (behavior_type = 2 收藏)
-        UserBehavior behavior = new UserBehavior();
-        behavior.setUserId(userId);
-        behavior.setProductId(productId);
-        behavior.setBehaviorType(2);
-        userBehaviorMapper.insert(behavior);
     }
 
     @Override

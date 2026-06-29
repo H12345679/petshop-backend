@@ -8,6 +8,7 @@ import com.petshop.common.Result;
 import com.petshop.security.JwtUtil;
 import com.petshop.security.RequireLogin;
 import com.petshop.security.UserContext;
+import com.petshop.user.model.vo.AiSessionVO;
 import io.jsonwebtoken.Claims;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
@@ -51,6 +52,15 @@ public class AiChatController {
     public Result<List<ChatHistoryVO>> history(@RequestParam String sessionId) {
         Long userId = UserContext.getUserId();
         List<ChatHistoryVO> list = aiChatService.getHistory(userId, sessionId);
+        return Result.success(list);
+    }
+
+    @ApiOperation("AI 历史会话列表")
+    @RequireLogin
+    @GetMapping("/chat/sessions")
+    public Result<List<AiSessionVO>> sessions() {
+        Long userId = UserContext.getUserId();
+        List<AiSessionVO> list = aiChatService.getSessionList(userId);
         return Result.success(list);
     }
 

@@ -59,6 +59,8 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
                         Video::getProductId, query.getProductId())
                 .eq(query.getShopId() != null, Video::getShopId, query.getShopId())
                 .eq(query.getStatus() != null, Video::getStatus, query.getStatus())
+                .inSql(query.getProductCategoryId() != null && query.getProductCategoryId() > 0,
+                        Video::getProductId, "SELECT id FROM product WHERE category_id = " + query.getProductCategoryId())
                 .orderByDesc(Video::getCreateTime);
 
         // MERCHANT 只看自己名下店铺的视频；ADMIN/null/empty 不过滤

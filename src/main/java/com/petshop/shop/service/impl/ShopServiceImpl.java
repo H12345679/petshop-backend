@@ -78,6 +78,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements Sh
         // 第一个参数是「条件是否生效」：名称非空才加 LIKE，状态非 null 才加 =
         wrapper.like(StringUtils.hasText(query.getName()), Shop::getName, query.getName());
         wrapper.eq(query.getStatus() != null, Shop::getStatus, query.getStatus());
+        wrapper.eq(query.getOwnerId() != null, Shop::getOwnerId, query.getOwnerId());
         wrapper.orderByDesc(Shop::getCreateTime);
 
         // MERCHANT 只看自己名下的店铺；ADMIN/null/empty 不过滤

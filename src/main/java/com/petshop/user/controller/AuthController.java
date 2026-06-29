@@ -12,6 +12,7 @@ import com.petshop.user.model.vo.UserVO;
 import com.petshop.user.service.EmailAuthService;
 import com.petshop.user.service.UserOauthService;
 import com.petshop.user.service.UserService;
+import com.petshop.log.annotation.LogOperation;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,6 +41,7 @@ public class AuthController {
     private EmailAuthService emailAuthService;
 
     @ApiOperation("用户注册")
+    @LogOperation("用户注册")
     @PostMapping("/register")
     public Result<UserVO> register(@Valid @RequestBody RegisterDTO dto) {
         UserVO vo = userService.register(dto);
@@ -47,6 +49,7 @@ public class AuthController {
     }
 
     @ApiOperation("用户登录")
+    @LogOperation("用户登录")
     @PostMapping("/login")
     public Result<LoginVO> login(@Valid @RequestBody LoginDTO dto) {
         LoginVO vo = userService.login(dto);

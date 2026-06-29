@@ -8,6 +8,7 @@ import com.petshop.product.entity.Product;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiParam;
+import com.petshop.common.annotation.TrackBehavior;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -27,6 +28,7 @@ public class FavoriteController {
 
     @ApiOperation("添加商品收藏")
     @RequireLogin
+    @TrackBehavior(type = 2, productIdSpEL = "#productId")
     @PostMapping("/{productId}")
     public Result<Void> addFavorite(@ApiParam("商品ID") @PathVariable Long productId) {
         favoriteService.addFavorite(productId);

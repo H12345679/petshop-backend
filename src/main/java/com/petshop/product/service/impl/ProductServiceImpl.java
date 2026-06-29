@@ -14,6 +14,7 @@ import com.petshop.product.mapper.ProductSkuMapper;
 import com.petshop.product.service.ProductPageQuery;
 import com.petshop.product.service.ProductService;
 import com.petshop.security.OwnershipChecker;
+import com.petshop.security.UserContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -120,6 +121,17 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
             w.eq(query.getShopId() != null, Product::getShopId, query.getShopId());
         }
 
+        // 多门店 IN 过滤（商家后台用，逗号分隔的 shopIds）
+        if (query.getShopId() == null && StringUtils.hasText(query.getShopIds())) {
+            java.util.List<Long> ids = new java.util.ArrayList<>();
+            for (String s : query.getShopIds().split(",")) {
+                try { ids.add(Long.parseLong(s.trim())); } catch (NumberFormatException ignored) {}
+            }
+            if (!ids.isEmpty()) {
+                w.in(Product::getShopId, ids);
+            }
+        }
+
         w.eq(query.getCategoryId() != null, Product::getCategoryId, query.getCategoryId());
 
         w.like(StringUtils.hasText(query.getName()), Product::getName, query.getName());
@@ -128,7 +140,18 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
 
         w.eq(query.getStatus() != null, Product::getStatus, query.getStatus());
 
-        w.orderByDesc(Product::getCreateTime);
+        w.ge(query.getMinPrice() != null, Product::getPrice, query.getMinPrice());
+        w.le(query.getMaxPrice() != null, Product::getPrice, query.getMaxPrice());
+
+        if ("sales_desc".equals(query.getSort())) {
+            w.orderByDesc(Product::getSales);
+        } else if ("price_asc".equals(query.getSort())) {
+            w.orderByAsc(Product::getPrice);
+        } else if ("price_desc".equals(query.getSort())) {
+            w.orderByDesc(Product::getPrice);
+        } else {
+            w.orderByDesc(Product::getCreateTime);
+        }
 
         return PageResult.of(this.page(query.toPage(), w));
     }
@@ -138,9 +161,9 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         // limit 兜底 + 上限，防止前端传 0 或超大值
         int n = (limit == null || limit <= 0) ? 6 : Math.min(limit, 50);
 
-//        if ("RECOMMEND".equalsIgnoreCase(strategy)) {
-//            return recommendProducts(n);
-//        }
+        if ("RECOMMEND".equalsIgnoreCase(strategy)) {
+            return recommendProducts(n);
+        }
 
         LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
         w.eq(Product::getStatus, 1);   // 首页只展示「上架」商品
@@ -152,5 +175,78 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         }
         // 取前 N 条：复用分页，要第 1 页、每页 n 条，拿 records（不写裸 LIMIT SQL）
         return this.page(new Page<>(1, n), w).getRecords();
+    }
+
+    private List<Product> recommendProducts(int n) {
+        // 取当前登录用户 id；为空（未登录）→ 没有个性化数据，直接 return homeProducts("HOT", n);
+        if(UserContext.getUserId()==null){
+            return homeProducts("hot",n);
+        }
+        // 查推荐结果：RecommendResultMapper 按 user_id 查、score 降序，
+        // 取出 product_id 列表（建议多取些，如 n*2，给「下架过滤 + 去重」留余量）。
+
+
+        // 用这批 product_id 批量查 product（只要 status=1 上架的）；
+        // 注意：IN 查询返回的顺序 ≠ 推荐顺序，需要自己按 product_id 列表重新排序。
+
+        // 不足 n 条（冷启动/新用户）→ 用热销 homeProducts("HOT", n) 去重补足到 n。
+
+        // （可选·营销加权）把「正在促销 / 有可领券」的商品适当置顶——依赖营销策略输出。
+
+        // 未实现前，先整体回退热销：保证接口可用、且符合第一阶段约定 ——
+        return homeProducts("HOT", n);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public java.math.BigDecimal checkPriceAndDeductStock(Long productId, Long skuId, Integer quantity) {
+        if (quantity == null || quantity <= 0) {
+            throw new BusinessException(ResultCode.PARAM_ERROR.getCode(), "购买数量必须大于0");
+        }
+        Product product = this.getById(productId);
+        if (product == null || product.getStatus() != 1) {
+            throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "商品不存在或已下架");
+        }
+
+        if (skuId != null) {
+            // 有 SKU
+            ProductSku sku = productSkuMapper.selectById(skuId);
+            if (sku == null || !sku.getProductId().equals(productId)) {
+                throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "商品规格不存在");
+            }
+            if (sku.getStock() < quantity) {
+                throw new BusinessException(ResultCode.ERROR.getCode(), "商品规格库存不足");
+            }
+            // 乐观锁思想扣减库存
+            int updated = productSkuMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ProductSku>()
+                    .setSql("stock = stock - " + quantity)
+                    .eq(ProductSku::getId, skuId)
+                    .ge(ProductSku::getStock, quantity));
+            if (updated == 0) {
+                throw new BusinessException(ResultCode.ERROR.getCode(), "库存扣减失败，已被抢空请重试");
+            }
+            return sku.getPrice();
+        } else {
+            // 无 SKU，扣减主表库存
+            if (product.getStock() < quantity) {
+                throw new BusinessException(ResultCode.ERROR.getCode(), "商品库存不足");
+            }
+            int updated = this.baseMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Product>()
+                    .setSql("stock = stock - " + quantity)
+                    .eq(Product::getId, productId)
+                    .ge(Product::getStock, quantity));
+            if (updated == 0) {
+                throw new BusinessException(ResultCode.ERROR.getCode(), "库存扣减失败，已被抢空请重试");
+            }
+            return product.getPrice();
+        }
+    }
+
+    @Override
+    public List<Product> getAllActiveProductsForRecommend() {
+        LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
+        w.eq(Product::getStatus, 1);
+        w.select(Product::getId, Product::getCategoryId, Product::getName, Product::getSales);
+        return this.list(w);
     }
 }
