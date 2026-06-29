@@ -1,5 +1,6 @@
 package com.petshop.user.service;
 
+import com.petshop.user.model.vo.AiSessionVO;
 import com.petshop.user.model.vo.ChatHistoryVO;
 import com.petshop.user.model.vo.ChatVO;
 
@@ -15,4 +16,7 @@ public interface AiChatService {
 
     /** 查询某会话的历史对话记录 */
     List<ChatHistoryVO> getHistory(Long userId, String sessionId);
+
+    /** 查询当前用户的所有历史会话列表 */
+    List<AiSessionVO> getSessionList(Long userId);
 }
