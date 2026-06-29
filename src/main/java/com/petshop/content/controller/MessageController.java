@@ -3,6 +3,7 @@ package com.petshop.content.controller;
 import com.petshop.common.PageResult;
 import com.petshop.common.Result;
 import com.petshop.content.dto.MessageSendDTO;
+import com.petshop.content.entity.Message;
 import com.petshop.content.service.MessageService;
 import com.petshop.content.vo.MessageVO;
 import com.petshop.security.RequireLogin;
@@ -31,6 +32,15 @@ public class MessageController {
     public Result<Void> sendMessage(@Validated @RequestBody MessageSendDTO dto) {
         messageService.sendMessage(dto);
         return Result.success();
+    }
+
+    @ApiOperation("获取后台历史消息分页（仅 ADMIN）")
+    @RequireRole({"ADMIN"})
+    @GetMapping("/manage")
+    public Result<PageResult<Message>> pageManageMessages(
+            @ApiParam("页码") @RequestParam(defaultValue = "1") long current,
+            @ApiParam("每页大小") @RequestParam(defaultValue = "10") long size) {
+        return Result.success(messageService.pageManageMessages(current, size));
     }
 
     @ApiOperation("获取我的消息列表分页（需登录）")

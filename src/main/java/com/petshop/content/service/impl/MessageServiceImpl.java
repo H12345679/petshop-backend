@@ -55,6 +55,15 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
     }
 
     @Override
+    public PageResult<Message> pageManageMessages(long current, long size) {
+        Page<Message> page = new Page<>(current, size);
+        LambdaQueryWrapper<Message> wrapper = new LambdaQueryWrapper<>();
+        wrapper.orderByDesc(Message::getId);
+        Page<Message> resultPage = this.page(page, wrapper);
+        return PageResult.of(resultPage);
+    }
+
+    @Override
     public PageResult<MessageVO> pageMyMessages(long current, long size) {
         Long userId = UserContext.getUserId();
         if (userId == null) {

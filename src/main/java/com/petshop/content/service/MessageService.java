@@ -15,6 +15,14 @@ public interface MessageService extends IService<Message> {
     void sendMessage(MessageSendDTO dto);
 
     /**
+     * 获取后台管理的历史消息分页
+     * @param current 页码
+     * @param size 每页大小
+     * @return 消息分页结果
+     */
+    PageResult<Message> pageManageMessages(long current, long size);
+
+    /**
      * 获取我的消息列表分页
      * @param current 页码
      * @param size 每页大小
