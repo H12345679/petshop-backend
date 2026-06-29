@@ -540,3 +540,20 @@ INSERT IGNORE INTO product_category (id, parent_id, name, sort, create_time, upd
 INSERT IGNORE INTO user (id, username, password, nickname, role, member_level_id, status, create_time, update_time, deleted) VALUES
  (1, 'admin', '$2a$12$AYxVk1sMLdm346ln91x8R.pKKCTNGtQWts8mfnefngMD/q0BBnuUC', '管理员', 'ADMIN', 0, 1, NOW(), NOW(), 0),
  (2, 'test',  '$2a$12$AYxVk1sMLdm346ln91x8R.pKKCTNGtQWts8mfnefngMD/q0BBnuUC', '测试用户', 'USER', 1, 1, NOW(), NOW(), 0);
+
+
+-- ============================================================
+-- 系统操作日志表
+-- ============================================================
+CREATE TABLE IF NOT EXISTS sys_log (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '日志ID',
+    user_id BIGINT COMMENT '操作人ID',
+    username VARCHAR(50) COMMENT '操作人用户名',
+    operation VARCHAR(50) COMMENT '操作模块/描述',
+    method VARCHAR(200) COMMENT '请求方法',
+    params TEXT COMMENT '请求参数',
+    time BIGINT COMMENT '执行时间(毫秒)',
+    ip VARCHAR(64) COMMENT 'IP地址',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统操作日志';
