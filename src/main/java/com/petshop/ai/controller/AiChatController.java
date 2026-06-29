@@ -1,14 +1,14 @@
-package com.petshop.controller;
+package com.petshop.ai.controller;
 
+import com.petshop.ai.model.dto.ChatDTO;
+import com.petshop.ai.model.vo.ChatHistoryVO;
+import com.petshop.ai.model.vo.ChatVO;
+import com.petshop.ai.service.AiChatService;
 import com.petshop.common.Result;
 import com.petshop.security.JwtUtil;
 import com.petshop.security.RequireLogin;
 import com.petshop.security.UserContext;
-import com.petshop.user.model.dto.ChatDTO;
 import com.petshop.user.model.vo.AiSessionVO;
-import com.petshop.user.model.vo.ChatHistoryVO;
-import com.petshop.user.model.vo.ChatVO;
-import com.petshop.user.service.AiChatService;
 import io.jsonwebtoken.Claims;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;

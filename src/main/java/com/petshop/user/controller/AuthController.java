@@ -1,12 +1,15 @@
-package com.petshop.controller;
+package com.petshop.user.controller;
 
 import com.petshop.common.Result;
+import com.petshop.user.model.dto.EmailLoginDTO;
 import com.petshop.user.model.dto.LoginDTO;
 import com.petshop.user.model.dto.OAuthLoginDTO;
 import com.petshop.user.model.dto.RegisterDTO;
+import com.petshop.user.model.dto.SendCodeDTO;
 import com.petshop.user.model.vo.LoginVO;
 import com.petshop.user.model.vo.OAuthLoginVO;
 import com.petshop.user.model.vo.UserVO;
+import com.petshop.user.service.EmailAuthService;
 import com.petshop.user.service.UserOauthService;
 import com.petshop.user.service.UserService;
 import com.petshop.log.annotation.LogOperation;
@@ -21,7 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 import javax.validation.Valid;
 
 /**
- * 认证接口：注册 / 登录 / OAuth（公开接口）。
+ * 认证接口：注册 / 登录 / OAuth / 邮箱验证码（公开接口）。
  */
 @Api(tags = "01-用户认证")
 @RestController
@@ -33,6 +36,9 @@ public class AuthController {
 
     @Autowired
     private UserOauthService userOauthService;
+
+    @Autowired
+    private EmailAuthService emailAuthService;
 
     @ApiOperation("用户注册")
     @LogOperation("用户注册")
@@ -54,6 +60,20 @@ public class AuthController {
     @PostMapping("/oauth/login")
     public Result<OAuthLoginVO> oauthLogin(@Valid @RequestBody OAuthLoginDTO dto) {
         OAuthLoginVO vo = userOauthService.login(dto);
+        return Result.success(vo);
+    }
+
+    @ApiOperation("发送邮箱验证码")
+    @PostMapping("/email/send-code")
+    public Result<Void> sendEmailCode(@Valid @RequestBody SendCodeDTO dto) {
+        emailAuthService.sendCode(dto.getEmail());
+        return Result.success(null);
+    }
+
+    @ApiOperation("邮箱验证码登录")
+    @PostMapping("/email/login")
+    public Result<LoginVO> emailLogin(@Valid @RequestBody EmailLoginDTO dto) {
+        LoginVO vo = emailAuthService.login(dto);
         return Result.success(vo);
     }
 }

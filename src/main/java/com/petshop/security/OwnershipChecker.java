@@ -61,11 +61,17 @@ public class OwnershipChecker {
         return ROLE_ADMIN.equals(UserContext.getRole());
     }
 
+    /** 是否有登录用户（通过 JWT 拦截器已设置 UserContext）。 */
+    private boolean isAuthenticated() {
+        return UserContext.getRole() != null;
+    }
+
     /**
-     * 校验“某店铺”归当前商家所有。ADMIN 放行；店铺不存在抛 404；非本店抛 403。
+     * 校验”某店铺”归当前商家所有。ADMIN 放行；店铺不存在抛 404；非本店抛 403。
+     * 未登录用户（公开接口）调用此方法表示不校验归属，直接放行。
      */
     public void assertShopOwned(Long shopId) {
-        if (isAdmin()) {
+        if (!isAuthenticated() || isAdmin()) {
             return;
         }
         requireMerchant();
@@ -112,18 +118,23 @@ public class OwnershipChecker {
     /**
      * 列表 / 统计查询用：当前商家名下所有 shopId。
      * <ul>
-     *   <li>ADMIN 返回 {@code null}——调用方据此不加店铺过滤（看全站）；</li>
-     *   <li>MERCHANT 返回其名下 shopId 列表（可能为空集，空集应使查询返回空结果）。</li>
+     *   <li>未登录 / ADMIN / USER 等非商家角色返回 {@code null}——调用方据此不加店铺过滤（看全站）；</li>
+     *   <li>MERCHANT 返回其名下 shopId 列表（可能为空集）。</li>
      * </ul>
      */
     public List<Long> myShopIds() {
-        if (isAdmin()) {
+        if (!isAuthenticated() || isAdmin()) {
             return null;
         }
-        requireMerchant();
+        if (!ROLE_MERCHANT.equals(UserContext.getRole())) {
+            // USER 等非商家角色：公开浏览，不过滤
+            return null;
+        }
         List<Shop> shops = shopMapper.selectList(
                 new LambdaQueryWrapper<Shop>().eq(Shop::getOwnerId, currentUserId()));
-        return shops.stream().map(Shop::getId).collect(Collectors.toList());
+        List<Long> ids = shops.stream().map(Shop::getId).collect(Collectors.toList());
+        // MERCHANT 无店铺时返回空列表，调用方需处理 IN () 语法问题
+        return ids;
     }
 
     // ---------------- 内部 ----------------

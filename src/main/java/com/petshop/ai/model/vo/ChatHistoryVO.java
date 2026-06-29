@@ -1,4 +1,4 @@
-package com.petshop.user.model.vo;
+package com.petshop.ai.model.vo;
 
 import lombok.Data;
 

@@ -1,4 +1,4 @@
-package com.petshop.user.model.dto;
+package com.petshop.ai.model.dto;
 
 import lombok.Data;
 

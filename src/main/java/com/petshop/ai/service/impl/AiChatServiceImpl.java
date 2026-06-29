@@ -1,13 +1,13 @@
-package com.petshop.user.service.serviceImpl;
+package com.petshop.ai.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.petshop.ai.AiProvider;
-import com.petshop.user.entity.AiChatLog;
-import com.petshop.user.mapper.AiChatLogMapper;
+import com.petshop.ai.entity.AiChatLog;
+import com.petshop.ai.mapper.AiChatLogMapper;
+import com.petshop.ai.model.vo.ChatHistoryVO;
+import com.petshop.ai.model.vo.ChatVO;
+import com.petshop.ai.service.AiChatService;
 import com.petshop.user.model.vo.AiSessionVO;
-import com.petshop.user.model.vo.ChatHistoryVO;
-import com.petshop.user.model.vo.ChatVO;
-import com.petshop.user.service.AiChatService;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;

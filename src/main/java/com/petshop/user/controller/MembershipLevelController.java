@@ -1,4 +1,4 @@
-package com.petshop.controller;
+package com.petshop.user.controller;
 
 import com.petshop.common.Result;
 import com.petshop.security.RequireLogin;

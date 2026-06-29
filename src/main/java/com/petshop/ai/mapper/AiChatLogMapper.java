@@ -1,7 +1,7 @@
-package com.petshop.user.mapper;
+package com.petshop.ai.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.petshop.user.entity.AiChatLog;
+import com.petshop.ai.entity.AiChatLog;
 import org.apache.ibatis.annotations.Mapper;
 
 @Mapper
