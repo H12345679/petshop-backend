@@ -1,11 +1,8 @@
 package com.petshop.common;
 
-import lombok.Getter;
-
 /**
  * 统一状态码。
  */
-@Getter
 public enum ResultCode {
 
     SUCCESS(200, "操作成功"),
@@ -21,5 +18,13 @@ public enum ResultCode {
     ResultCode(Integer code, String message) {
         this.code = code;
         this.message = message;
+    }
+
+    public Integer getCode() {
+        return code;
+    }
+
+    public String getMessage() {
+        return message;
     }
 }

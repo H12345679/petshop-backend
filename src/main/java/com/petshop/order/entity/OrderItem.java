@@ -1,5 +1,6 @@
 package com.petshop.order.entity;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.petshop.common.BaseEntity;
 import lombok.Data;
@@ -19,7 +20,8 @@ public class OrderItem extends BaseEntity {
     private Long shopId;
     private String productName;
     private String productImage;
-    private String spec;
+    @TableField("spec")
+    private String specName;
     private BigDecimal price;
     private Integer quantity;
     /** 小计 = price * quantity */

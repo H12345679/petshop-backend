@@ -14,6 +14,6 @@
  *   &#64;Service
  *   public class VideoServiceImpl extends ServiceImpl&lt;VideoMapper, Video&gt; implements VideoService { ... }
  * </pre>
- * 参考 {@link com.petshop.controller.demo.DemoItemService} 和 {@link com.petshop.controller.demo.DemoItemServiceImpl}。
+ * 参考 {@link com.petshop.demo.service.DemoItemService} 和 {@link com.petshop.demo.service.impl.DemoItemServiceImpl}。
  */
 package com.petshop.content.service;

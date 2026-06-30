@@ -20,8 +20,14 @@ public class WebMvcConfig implements WebMvcConfigurer {
         registry.addInterceptor(jwtInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns(
-                        "/doc.html", "/webjars/**", "/swagger-resources/**",
-                        "/v2/api-docs", "/v3/api-docs", "/favicon.ico", "/error"
+                        "/doc.html",
+                        "/webjars/**",
+                        "/swagger-resources/**",
+                        "/v2/api-docs",
+                        "/v3/api-docs",
+                        "/favicon.ico",
+                        "/error"
+
                 );
     }
 }
