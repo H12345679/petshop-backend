@@ -1,9 +1,12 @@
 package com.petshop.common.aspect;
 
 import com.petshop.common.annotation.TrackBehavior;
+import com.petshop.config.RabbitMQConfig;
 import com.petshop.content.entity.UserBehavior;
 import com.petshop.content.mapper.UserBehaviorMapper;
+import com.petshop.recommend.model.dto.UserBehaviorMessage;
 import com.petshop.security.UserContext;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.annotation.AfterReturning;
 import org.aspectj.lang.annotation.Aspect;
@@ -28,6 +31,9 @@ public class BehaviorAspect {
     @Autowired
     private UserBehaviorMapper userBehaviorMapper;
 
+    @Autowired
+    private RabbitTemplate rabbitTemplate;
+
     private final ExpressionParser parser = new SpelExpressionParser();
     private final DefaultParameterNameDiscoverer discoverer = new DefaultParameterNameDiscoverer();
 
@@ -49,8 +55,13 @@ public class BehaviorAspect {
                 behavior.setUserId(userId);
                 behavior.setProductId(productId);
                 behavior.setBehaviorType(trackBehavior.type());
-                // 这里为了简单直接插入，在极高并发下可以丢入 MQ 或线程池异步插入
+                // 同步落库
                 userBehaviorMapper.insert(behavior);
+                
+                // 异步发送 MQ，供推荐系统进行实时画像计算
+                rabbitTemplate.convertAndSend(RabbitMQConfig.RECOMMEND_EXCHANGE, 
+                    RabbitMQConfig.BEHAVIOR_ROUTING_KEY, 
+                    new UserBehaviorMessage(userId, productId, trackBehavior.type()));
             }
         } catch (Exception e) {
             // 捕获所有异常，确保埋点逻辑崩溃绝不影响主业务的正常返回

@@ -11,11 +11,13 @@ import com.petshop.product.entity.Product;
 import com.petshop.product.entity.ProductSku;
 import com.petshop.product.mapper.ProductMapper;
 import com.petshop.product.mapper.ProductSkuMapper;
+import com.petshop.product.mapper.ProductTagMapper;
 import com.petshop.product.service.ProductPageQuery;
 import com.petshop.product.service.ProductService;
 import com.petshop.security.OwnershipChecker;
 import com.petshop.security.UserContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -34,6 +36,10 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     private OwnershipChecker ownershipChecker;
     @Autowired
     private ProductSkuMapper productSkuMapper;
+    @Autowired
+    private ProductTagMapper productTagMapper;
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     @Override
     @Transactional(rollbackFor = Exception.class)   // 主表+子表：任一步抛异常就整体回滚
@@ -178,23 +184,59 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     }
 
     private List<Product> recommendProducts(int n) {
-        // 取当前登录用户 id；为空（未登录）→ 没有个性化数据，直接 return homeProducts("HOT", n);
-        if(UserContext.getUserId()==null){
-            return homeProducts("hot",n);
+        Long userId = UserContext.getUserId();
+        if (userId == null) {
+            return homeProducts("HOT", n);
         }
-        // 查推荐结果：RecommendResultMapper 按 user_id 查、score 降序，
-        // 取出 product_id 列表（建议多取些，如 n*2，给「下架过滤 + 去重」留余量）。
 
+        // 1. 从 Redis 取出用户画像中权重最高的 Top 3 标签
+        String redisKey = "user_profile:" + userId + ":tags";
+        java.util.Set<String> tagIdsStr = stringRedisTemplate.opsForZSet().reverseRange(redisKey, 0, 2);
+        
+        List<Product> recommendList = new java.util.ArrayList<>();
+        
+        if (tagIdsStr != null && !tagIdsStr.isEmpty()) {
+            List<Long> tagIds = new java.util.ArrayList<>();
+            for (String s : tagIdsStr) {
+                tagIds.add(Long.parseLong(s));
+            }
+            
+            // 2. 根据这几个标签去 product_tag 找对应的 product_id
+            List<Long> productIds = productTagMapper.selectProductIdsByTagIds(tagIds);
+            
+            if (productIds != null && !productIds.isEmpty()) {
+                // 3. 从数据库查出这些商品，必须是上架的 (status=1)
+                LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
+                w.eq(Product::getStatus, 1).in(Product::getId, productIds).orderByDesc(Product::getSales);
+                // 限制最多取 n 条
+                List<Product> records = this.page(new Page<>(1, n), w).getRecords();
+                if (records != null) {
+                    recommendList = new java.util.ArrayList<>(records);
+                }
+            }
+        }
 
-        // 用这批 product_id 批量查 product（只要 status=1 上架的）；
-        // 注意：IN 查询返回的顺序 ≠ 推荐顺序，需要自己按 product_id 列表重新排序。
+        // 4. 如果标签推荐出来的数量不够，用热门商品凑数 (冷启动/新用户)
+        if (recommendList.size() < n) {
+            int need = n - recommendList.size();
+            List<Product> hots = homeProducts("HOT", n + recommendList.size()); // 多取一点防重复
+            for (Product hot : hots) {
+                boolean exists = false;
+                for (Product r : recommendList) {
+                    if (r.getId().equals(hot.getId())) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    recommendList.add(hot);
+                    need--;
+                    if (need <= 0) break;
+                }
+            }
+        }
 
-        // 不足 n 条（冷启动/新用户）→ 用热销 homeProducts("HOT", n) 去重补足到 n。
-
-        // （可选·营销加权）把「正在促销 / 有可领券」的商品适当置顶——依赖营销策略输出。
-
-        // 未实现前，先整体回退热销：保证接口可用、且符合第一阶段约定 ——
-        return homeProducts("HOT", n);
+        return recommendList;
     }
 
     @Override
