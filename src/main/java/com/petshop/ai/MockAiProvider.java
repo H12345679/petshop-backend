@@ -28,8 +28,13 @@ public class MockAiProvider implements AiProvider {
     );
 
     @Override
-    public String chat(String question) {
-        // 模拟 AI 思考延迟（实际 DeepSeek 接入后由网络请求自然产生）
+    public String chat(String question, String context) {
+        // 模拟网络延迟
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         return ANSWERS.get(random.nextInt(ANSWERS.size()));
     }
 }
