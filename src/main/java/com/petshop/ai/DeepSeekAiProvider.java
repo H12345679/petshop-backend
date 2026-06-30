@@ -61,18 +61,22 @@ public class DeepSeekAiProvider implements AiProvider {
     }
 
     @Override
-    public String chat(String question) {
+    public String chat(String question, String context) {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.setBearerAuth(apiKey);
+            
+            String sysPrompt = "你是一个专业的宠物健康顾问，擅长回答关于猫、狗、兔子、鹦鹉等常见宠物的饲养、健康、营养、行为等问题。请用中文回答，语气亲切专业。如果用户问的不是宠物相关的问题，请友好地引导用户回到宠物话题。";
+            if (context != null && !context.trim().isEmpty()) {
+                sysPrompt += "\n【商城在售商品库】：\n" + context +
+                             "\n\n要求：如果用户询问购买建议，请严格从上述商品库中挑选1-3款推荐给他，必须给出推荐理由，并且必须使用Markdown链接格式附带商品链接，例如：[【商品名】](/product/商品ID)。如果商品库中没有合适的，请委婉说明。";
+            }
 
             Map<String, Object> body = Map.of(
                 "model", model,
                 "messages", List.of(
-                    Map.of("role", "system", "content",
-                        "你是一个专业的宠物健康顾问，擅长回答关于猫、狗、兔子、鹦鹉等常见宠物的饲养、健康、营养、行为等问题。" +
-                        "请用中文回答，语气亲切专业。如果用户问的不是宠物相关的问题，请友好地引导用户回到宠物话题。"),
+                    Map.of("role", "system", "content", sysPrompt),
                     Map.of("role", "user", "content", question)
                 ),
                 "temperature", 0.7,
