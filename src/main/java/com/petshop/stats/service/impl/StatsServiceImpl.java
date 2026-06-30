@@ -35,12 +35,28 @@ public class StatsServiceImpl implements StatsService {
     @Autowired
     private MembershipLevelMapper membershipLevelMapper;
 
+    @Autowired
+    private com.petshop.security.OwnershipChecker ownershipChecker;
+
     @Override
     public Map<String, Object> getKpi() {
+        List<Long> shopIds = ownershipChecker.myShopIds();
         Map<String, Object> data = new HashMap<>();
+
+        if (shopIds != null && shopIds.isEmpty()) {
+            data.put("todayRevenue", BigDecimal.ZERO);
+            data.put("todayOrders", 0);
+            data.put("totalUsers", 0L);
+            data.put("activeProducts", 0L);
+            return data;
+        }
+
         LocalDateTime todayStart = LocalDate.now().atStartOfDay();
         LambdaQueryWrapper<Order> orderWrapper = new LambdaQueryWrapper<>();
         orderWrapper.ge(Order::getCreateTime, todayStart).ge(Order::getStatus, 0);
+        if (shopIds != null) {
+            orderWrapper.in(Order::getShopId, shopIds);
+        }
         List<Order> todayOrdersList = orderMapper.selectList(orderWrapper);
 
         BigDecimal todayRevenue = todayOrdersList.stream()
@@ -48,25 +64,39 @@ public class StatsServiceImpl implements StatsService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         int todayOrders = todayOrdersList.size();
 
-        if (todayOrders == 0) {
+        if (shopIds == null && todayOrders == 0) {
             todayRevenue = new BigDecimal("2410.00");
             todayOrders = 4;
         }
 
-        Long totalUsers = userMapper.selectCount(new LambdaQueryWrapper<User>().eq(User::getStatus, 1));
-        if (totalUsers == null || totalUsers == 0) {
-            totalUsers = userMapper.selectCount(null);
-        }
-        if (totalUsers == null || totalUsers == 0) {
-            totalUsers = 810L;
+        Long totalUsers;
+        if (shopIds == null) {
+            totalUsers = userMapper.selectCount(new LambdaQueryWrapper<User>().eq(User::getStatus, 1));
+            if (totalUsers == null || totalUsers == 0) {
+                totalUsers = userMapper.selectCount(null);
+            }
+            if (totalUsers == null || totalUsers == 0) {
+                totalUsers = 810L;
+            }
+        } else {
+            List<Order> merchantOrders = orderMapper.selectList(new LambdaQueryWrapper<Order>().in(Order::getShopId, shopIds));
+            totalUsers = merchantOrders.stream().map(Order::getUserId).filter(Objects::nonNull).distinct().count();
         }
 
-        Long activeProducts = productMapper.selectCount(new LambdaQueryWrapper<Product>().eq(Product::getStatus, 1));
-        if (activeProducts == null || activeProducts == 0) {
-            activeProducts = productMapper.selectCount(null);
-        }
-        if (activeProducts == null || activeProducts == 0) {
-            activeProducts = 256L;
+        Long activeProducts;
+        if (shopIds == null) {
+            activeProducts = productMapper.selectCount(new LambdaQueryWrapper<Product>().eq(Product::getStatus, 1));
+            if (activeProducts == null || activeProducts == 0) {
+                activeProducts = productMapper.selectCount(null);
+            }
+            if (activeProducts == null || activeProducts == 0) {
+                activeProducts = 256L;
+            }
+        } else {
+            activeProducts = productMapper.selectCount(new LambdaQueryWrapper<Product>().in(Product::getShopId, shopIds).eq(Product::getStatus, 1));
+            if (activeProducts == null) {
+                activeProducts = 0L;
+            }
         }
 
         data.put("todayRevenue", todayRevenue);
@@ -86,12 +116,29 @@ public class StatsServiceImpl implements StatsService {
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MM-dd");
         LocalDate now = LocalDate.now();
 
+        List<Long> shopIds = ownershipChecker.myShopIds();
+        if (shopIds != null && shopIds.isEmpty()) {
+            for (int i = days - 1; i >= 0; i--) {
+                dates.add(now.minusDays(i).format(dtf));
+                orderCounts.add(0);
+                revenues.add(BigDecimal.ZERO);
+            }
+            Map<String, Object> res = new HashMap<>();
+            res.put("dates", dates);
+            res.put("orderCounts", orderCounts);
+            res.put("revenues", revenues);
+            return res;
+        }
+
         LocalDateTime startTime = now.minusDays(days - 1).atStartOfDay();
         LambdaQueryWrapper<Order> query = new LambdaQueryWrapper<>();
         query.ge(Order::getCreateTime, startTime).ge(Order::getStatus, 0);
+        if (shopIds != null) {
+            query.in(Order::getShopId, shopIds);
+        }
         List<Order> allOrders = orderMapper.selectList(query);
 
-        boolean hasRealData = !allOrders.isEmpty();
+        boolean hasRealData = (shopIds != null) || !allOrders.isEmpty();
 
         int[] demoOrders = {2, 3, 5, 2, 6, 8, 4, 5, 7, 3, 6, 9, 5, 4, 6, 8, 5, 7, 4, 6, 5, 8, 7, 9, 6, 5, 8, 7, 6, 4};
         double[] demoRevs = {1200, 1800, 3100, 1500, 3800, 5200, 2410, 3200, 4500, 1900, 3700, 5800, 3100, 2600, 3900, 5100, 3200, 4400, 2500, 3800, 3100, 5000, 4300, 5900, 3800, 3100, 4900, 4200, 3600, 2410};
@@ -123,12 +170,22 @@ public class StatsServiceImpl implements StatsService {
 
     @Override
     public List<Map<String, Object>> getOrderStatus() {
-        List<Order> allOrders = orderMapper.selectList(null);
+        List<Long> shopIds = ownershipChecker.myShopIds();
+        if (shopIds != null && shopIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        LambdaQueryWrapper<Order> query = new LambdaQueryWrapper<>();
+        if (shopIds != null) {
+            query.in(Order::getShopId, shopIds);
+        }
+        List<Order> allOrders = orderMapper.selectList(query);
+
         Map<Integer, Long> countMap = allOrders.stream()
                 .filter(o -> o.getStatus() != null)
                 .collect(Collectors.groupingBy(Order::getStatus, Collectors.counting()));
 
-        if (allOrders.isEmpty()) {
+        if (shopIds == null && allOrders.isEmpty()) {
             countMap.put(0, 5L);
             countMap.put(1, 15L);
             countMap.put(2, 8L);
@@ -163,7 +220,24 @@ public class StatsServiceImpl implements StatsService {
 
     @Override
     public List<Map<String, Object>> getMemberLevel() {
-        List<User> users = userMapper.selectList(null);
+        List<Long> shopIds = ownershipChecker.myShopIds();
+        if (shopIds != null && shopIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<User> users;
+        if (shopIds != null) {
+            List<Order> merchantOrders = orderMapper.selectList(new LambdaQueryWrapper<Order>().in(Order::getShopId, shopIds));
+            Set<Long> userIds = merchantOrders.stream().map(Order::getUserId).filter(Objects::nonNull).collect(Collectors.toSet());
+            if (userIds.isEmpty()) {
+                users = new ArrayList<>();
+            } else {
+                users = userMapper.selectBatchIds(userIds);
+            }
+        } else {
+            users = userMapper.selectList(null);
+        }
+
         List<MembershipLevel> levels = membershipLevelMapper.selectList(null);
         Map<Long, String> levelNameMap = levels.stream().collect(Collectors.toMap(MembershipLevel::getId, MembershipLevel::getName));
 
@@ -173,7 +247,7 @@ public class StatsServiceImpl implements StatsService {
             countByLevelName.put(l.getName(), 0L);
         }
 
-        if (users.isEmpty()) {
+        if (shopIds == null && users.isEmpty()) {
             countByLevelName.put("非会员", 200L);
             countByLevelName.put("普通", 500L);
             countByLevelName.put("银卡", 80L);
@@ -205,11 +279,20 @@ public class StatsServiceImpl implements StatsService {
     @Override
     public List<Map<String, Object>> getProductSales(Integer limit) {
         if (limit == null || limit <= 0) limit = 10;
+        List<Long> shopIds = ownershipChecker.myShopIds();
+        if (shopIds != null && shopIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+
         LambdaQueryWrapper<Product> query = new LambdaQueryWrapper<>();
-        query.eq(Product::getStatus, 1).orderByDesc(Product::getSales);
+        query.eq(Product::getStatus, 1);
+        if (shopIds != null) {
+            query.in(Product::getShopId, shopIds);
+        }
+        query.orderByDesc(Product::getSales);
         List<Product> products = productMapper.selectList(query);
 
-        if (products.isEmpty()) {
+        if (shopIds == null && products.isEmpty()) {
             products = productMapper.selectList(null);
         }
 
@@ -218,7 +301,7 @@ public class StatsServiceImpl implements StatsService {
         String[] demoNames = {"蓝猫", "皇家猫粮", "逗猫棒", "金毛犬", "猫砂10kg", "美短", "自动喂食器", "布偶猫", "实木猫爬架", "智能饮水机"};
         int[] demoSales = {120, 96, 85, 70, 65, 58, 48, 40, 35, 25};
 
-        if (products.isEmpty() || products.stream().allMatch(p -> p.getSales() == null || p.getSales() == 0)) {
+        if (shopIds == null && (products.isEmpty() || products.stream().allMatch(p -> p.getSales() == null || p.getSales() == 0))) {
             for (int i = 0; i < Math.min(limit, demoNames.length); i++) {
                 Map<String, Object> item = new HashMap<>();
                 item.put("product_name", demoNames[i]);

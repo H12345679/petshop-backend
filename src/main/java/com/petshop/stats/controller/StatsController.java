@@ -20,35 +20,35 @@ public class StatsController {
     private StatsService statsService;
 
     @ApiOperation("KPI 概览")
-    @RequireRole("ADMIN")
+    @RequireRole({"ADMIN", "MERCHANT"})
     @GetMapping("/kpi")
     public Result<Map<String, Object>> kpi() {
         return Result.success(statsService.getKpi());
     }
 
     @ApiOperation("销量&订单趋势")
-    @RequireRole("ADMIN")
+    @RequireRole({"ADMIN", "MERCHANT"})
     @GetMapping("/sales")
     public Result<Map<String, Object>> salesTrend(@RequestParam(defaultValue = "7") Integer days) {
         return Result.success(statsService.getSalesTrend(days));
     }
 
     @ApiOperation("订单状态分布")
-    @RequireRole("ADMIN")
+    @RequireRole({"ADMIN", "MERCHANT"})
     @GetMapping("/order-status")
     public Result<List<Map<String, Object>>> orderStatus() {
         return Result.success(statsService.getOrderStatus());
     }
 
     @ApiOperation("会员等级分布")
-    @RequireRole("ADMIN")
+    @RequireRole({"ADMIN", "MERCHANT"})
     @GetMapping("/member-level")
     public Result<List<Map<String, Object>>> memberLevel() {
         return Result.success(statsService.getMemberLevel());
     }
 
     @ApiOperation("热销商品 TopN")
-    @RequireRole("ADMIN")
+    @RequireRole({"ADMIN", "MERCHANT"})
     @GetMapping("/product-sales")
     public Result<List<Map<String, Object>>> productSales(@RequestParam(defaultValue = "10") Integer limit) {
         return Result.success(statsService.getProductSales(limit));

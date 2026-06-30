@@ -139,7 +139,11 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
         // MERCHANT 只看自家店
         List<Long> shopIds = ownershipChecker.myShopIds();
         if (shopIds != null) {
-            wrapper.in(Review::getShopId, shopIds);
+            if (shopIds.isEmpty()) {
+                wrapper.eq(Review::getId, -1L);
+            } else {
+                wrapper.in(Review::getShopId, shopIds);
+            }
         }
         if (productId != null) {
             wrapper.eq(Review::getProductId, productId);
