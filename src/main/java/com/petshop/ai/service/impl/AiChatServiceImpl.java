@@ -34,36 +34,55 @@ public class AiChatServiceImpl implements AiChatService {
     private ProductMapper productMapper;
 
     @Override
-    public ChatVO chat(Long userId, String sessionId, String question) {
-        // 1. 查询当前商城上架的、销量排名前 20 的热销商品
+    public org.springframework.web.servlet.mvc.method.annotation.SseEmitter streamChat(Long userId, String sessionId, String question) {
+        org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter = new org.springframework.web.servlet.mvc.method.annotation.SseEmitter(60000L);
+
         QueryWrapper<Product> qw = new QueryWrapper<>();
         qw.eq("status", 1).orderByDesc("sales").last("LIMIT 20");
         List<Product> productList = productMapper.selectList(qw);
         
-        // 2. 组装成极简的上下文文本
         StringBuilder contextBuilder = new StringBuilder();
         for (Product p : productList) {
             contextBuilder.append(String.format("- ID:%d, %s, ￥%s, 简介:%s\n", 
                 p.getId(), p.getName(), p.getPrice(), p.getDescription()));
         }
 
-        // 3. 调用 AI 生成回答，传入商品上下文
-        String answer = aiProvider.chat(question, contextBuilder.toString());
+        StringBuilder fullAnswer = new StringBuilder();
 
-        // 持久化对话记录
-        AiChatLog log = new AiChatLog();
-        log.setUserId(userId);
-        log.setSessionId(sessionId);
-        log.setQuestion(question);
-        log.setAnswer(answer);
-        aiChatLogMapper.insert(log);
+        new Thread(() -> {
+            try {
+                aiProvider.streamChat(question, contextBuilder.toString(),
+                    msg -> {
+                        try {
+                            fullAnswer.append(msg);
+                            emitter.send(java.util.Map.of("text", msg));
+                        } catch (Exception e) {
+                            emitter.completeWithError(e);
+                        }
+                    },
+                    () -> {
+                        try {
+                            AiChatLog log = new AiChatLog();
+                            log.setUserId(userId);
+                            log.setSessionId(sessionId);
+                            log.setQuestion(question);
+                            log.setAnswer(fullAnswer.toString());
+                            aiChatLogMapper.insert(log);
+                            emitter.complete();
+                        } catch (Exception e) {
+                            emitter.completeWithError(e);
+                        }
+                    },
+                    error -> {
+                        emitter.completeWithError(error);
+                    }
+                );
+            } catch (Exception e) {
+                emitter.completeWithError(e);
+            }
+        }).start();
 
-        // 构建响应
-        ChatVO vo = new ChatVO();
-        vo.setSessionId(sessionId);
-        vo.setQuestion(question);
-        vo.setAnswer(answer);
-        return vo;
+        return emitter;
     }
 
     @Override
