@@ -515,12 +515,47 @@ CREATE TABLE IF NOT EXISTS recommend_result (
     user_id     BIGINT        NOT NULL COMMENT '用户id',
     product_id  BIGINT        NOT NULL COMMENT '推荐商品id',
     score       DECIMAL(10,4) NOT NULL DEFAULT 0 COMMENT '推荐得分',
-    source      VARCHAR(20)   NOT NULL DEFAULT 'UCF' COMMENT '算法来源 UCF=基于用户',
+    source      VARCHAR(20)   NOT NULL DEFAULT 'UCF' COMMENT '算法来源 UCF=基于用户, ICF=基于物品',
     create_time DATETIME      NULL,
     PRIMARY KEY (id),
     UNIQUE KEY uk_user_product (user_id, product_id),
     KEY idx_user_score (user_id, score)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '推荐结果';
+
+-- ============================================================
+-- 混合推荐扩展表（Item-based CF 与 实时画像推荐）
+-- ============================================================
+
+-- 商品相似度（item-based CF 核心：存储商品间的相似度得分）
+CREATE TABLE IF NOT EXISTS item_similarity (
+    id             BIGINT       NOT NULL COMMENT '主键',
+    product_id     BIGINT       NOT NULL COMMENT '目标商品id',
+    sim_product_id BIGINT       NOT NULL COMMENT '相似商品id',
+    similarity     DECIMAL(8,6) NOT NULL DEFAULT 0 COMMENT '相似度 0~1',
+    update_time    DATETIME     NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_item_sim (product_id, sim_product_id),
+    KEY idx_item_sim (product_id, similarity)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '商品相似度(ICF)';
+
+-- 标签字典库（画像推荐用）
+CREATE TABLE IF NOT EXISTS tag (
+    id          BIGINT       NOT NULL COMMENT '主键',
+    name        VARCHAR(50)  NOT NULL COMMENT '标签名称',
+    create_time DATETIME     NULL,
+    deleted     TINYINT      NOT NULL DEFAULT 0,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_name (name)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '标签字典库';
+
+-- 商品与标签关联表
+CREATE TABLE IF NOT EXISTS product_tag (
+    id          BIGINT  NOT NULL COMMENT '主键',
+    product_id  BIGINT  NOT NULL COMMENT '商品id',
+    tag_id      BIGINT  NOT NULL COMMENT '标签id',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_product_tag (product_id, tag_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '商品与标签关联表';
 
 
 -- ============================================================
