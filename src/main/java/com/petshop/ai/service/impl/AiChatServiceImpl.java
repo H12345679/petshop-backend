@@ -7,6 +7,8 @@ import com.petshop.ai.mapper.AiChatLogMapper;
 import com.petshop.ai.model.vo.ChatHistoryVO;
 import com.petshop.ai.model.vo.ChatVO;
 import com.petshop.ai.service.AiChatService;
+import com.petshop.product.entity.Product;
+import com.petshop.product.mapper.ProductMapper;
 import com.petshop.user.model.vo.AiSessionVO;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,10 +30,25 @@ public class AiChatServiceImpl implements AiChatService {
     @Autowired
     private AiProvider aiProvider;
 
+    @Autowired
+    private ProductMapper productMapper;
+
     @Override
     public ChatVO chat(Long userId, String sessionId, String question) {
-        // 调用 AI 生成回答
-        String answer = aiProvider.chat(question);
+        // 1. 查询当前商城上架的、销量排名前 20 的热销商品
+        QueryWrapper<Product> qw = new QueryWrapper<>();
+        qw.eq("status", 1).orderByDesc("sales").last("LIMIT 20");
+        List<Product> productList = productMapper.selectList(qw);
+        
+        // 2. 组装成极简的上下文文本
+        StringBuilder contextBuilder = new StringBuilder();
+        for (Product p : productList) {
+            contextBuilder.append(String.format("- ID:%d, %s, ￥%s, 简介:%s\n", 
+                p.getId(), p.getName(), p.getPrice(), p.getDescription()));
+        }
+
+        // 3. 调用 AI 生成回答，传入商品上下文
+        String answer = aiProvider.chat(question, contextBuilder.toString());
 
         // 持久化对话记录
         AiChatLog log = new AiChatLog();

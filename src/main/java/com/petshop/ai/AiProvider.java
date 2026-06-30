@@ -9,6 +9,11 @@ package com.petshop.ai;
  */
 public interface AiProvider {
 
+    /** 根据问题和背景上下文生成回答 */
+    String chat(String question, String context);
+
     /** 根据问题生成回答 */
-    String chat(String question);
+    default String chat(String question) {
+        return chat(question, null);
+    }
 }
