@@ -15,9 +15,16 @@ import org.springframework.web.client.RestTemplate;
 
 import javax.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.function.Consumer;
 import java.util.List;
 import java.util.Map;
-
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 /**
  * DeepSeek AI 实现（OpenAI 兼容协议）。
  * <p>
@@ -104,6 +111,80 @@ public class DeepSeekAiProvider implements AiProvider {
         } catch (Exception e) {
             log.error("DeepSeek API 调用异常", e);
             return "抱歉，AI 服务暂时不可用：" + e.getMessage();
+        }
+    }
+
+    @Override
+    public void streamChat(String question, String context, Consumer<String> onMessage, Runnable onComplete, Consumer<Throwable> onError) {
+        try {
+            String sysPrompt = "你是一个专业的宠物健康顾问，擅长回答关于猫、狗、兔子、鹦鹉等常见宠物的饲养、健康、营养、行为等问题。请用中文回答，语气亲切专业。如果用户问的不是宠物相关的问题，请友好地引导用户回到宠物话题。";
+            if (context != null && !context.trim().isEmpty()) {
+                sysPrompt += "\n【商城在售商品库】：\n" + context +
+                             "\n\n要求：如果用户询问购买建议，请严格从上述商品库中挑选1-3款推荐给他，必须给出推荐理由，并且必须使用Markdown链接格式附带商品链接，例如：[【商品名】](/product/商品ID)。如果商品库中没有合适的，请委婉说明。";
+            }
+
+            Map<String, Object> bodyMap = Map.of(
+                "model", model,
+                "messages", List.of(
+                    Map.of("role", "system", "content", sysPrompt),
+                    Map.of("role", "user", "content", question)
+                ),
+                "temperature", 0.7,
+                "max_tokens", 1000,
+                "stream", true
+            );
+
+            ObjectMapper mapper = new ObjectMapper();
+            String requestBody = mapper.writeValueAsString(bodyMap);
+
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofMillis(timeout))
+                    .build();
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(apiUrl))
+                    .timeout(Duration.ofMillis(timeout))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            client.sendAsync(request, HttpResponse.BodyHandlers.ofLines())
+                  .thenAccept(response -> {
+                      if (response.statusCode() >= 400) {
+                          onError.accept(new RuntimeException("API 调用失败，状态码：" + response.statusCode()));
+                          return;
+                      }
+                      response.body().forEach(line -> {
+                          if (line.startsWith("data: ")) {
+                              String data = line.substring(6);
+                              if ("[DONE]".equals(data.trim())) {
+                                  return;
+                              }
+                              try {
+                                  JsonNode root = mapper.readTree(data);
+                                  JsonNode choices = root.path("choices");
+                                  if (choices.isArray() && choices.size() > 0) {
+                                      JsonNode delta = choices.get(0).path("delta");
+                                      if (delta.has("content")) {
+                                          onMessage.accept(delta.get("content").asText());
+                                      }
+                                  }
+                              } catch (Exception e) {
+                                  log.error("解析流式 JSON 异常: {}", data, e);
+                              }
+                          }
+                      });
+                      onComplete.run();
+                  })
+                  .exceptionally(ex -> {
+                      onError.accept(ex);
+                      return null;
+                  });
+
+        } catch (Exception e) {
+            log.error("DeepSeek API 流式调用异常", e);
+            onError.accept(e);
         }
     }
 

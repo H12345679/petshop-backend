@@ -38,13 +38,14 @@ public class AiChatController {
     @Autowired
     private JwtUtil jwtUtil;
 
-    @ApiOperation("AI 问答客服（免登录亦可调用，携带 Token 则自动关联用户）")
-    @PostMapping("/chat")
-    public Result<ChatVO> chat(@Valid @RequestBody ChatDTO dto, HttpServletRequest request) {
+    @ApiOperation("AI 流式问答客服")
+    @PostMapping(value = "/chat/stream", produces = org.springframework.http.MediaType.TEXT_EVENT_STREAM_VALUE)
+    public org.springframework.web.servlet.mvc.method.annotation.SseEmitter streamChat(@Valid @RequestBody ChatDTO dto, HttpServletRequest request) {
         Long userId = resolveUserId(request);
-        ChatVO vo = aiChatService.chat(userId, dto.getSessionId(), dto.getQuestion());
-        return Result.success(vo);
+        return aiChatService.streamChat(userId, dto.getSessionId(), dto.getQuestion());
     }
+
+
 
     @ApiOperation("AI 历史对话记录")
     @RequireLogin

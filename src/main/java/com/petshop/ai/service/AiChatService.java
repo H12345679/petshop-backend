@@ -9,10 +9,11 @@ import java.util.List;
 public interface AiChatService {
 
     /**
-     * AI 问答。
-     * @param userId 可为 null（匿名提问）
+     * AI 流式问答。
      */
-    ChatVO chat(Long userId, String sessionId, String question);
+    org.springframework.web.servlet.mvc.method.annotation.SseEmitter streamChat(Long userId, String sessionId, String question);
+
+
 
     /** 查询某会话的历史对话记录 */
     List<ChatHistoryVO> getHistory(Long userId, String sessionId);
