@@ -28,13 +28,33 @@ public class MockAiProvider implements AiProvider {
     );
 
     @Override
-    public String chat(String question, String context) {
-        // 模拟网络延迟
-        try {
-            Thread.sleep(1000);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+    public void streamChat(String question, String context, java.util.function.Consumer<String> onMessage, Runnable onComplete, java.util.function.Consumer<Throwable> onError) {
+        String answer = ANSWERS.get(random.nextInt(ANSWERS.size()));
+        
+        // 简单加点商品推荐，展示 Markdown
+        if (context != null && !context.trim().isEmpty()) {
+            answer += "\n\n顺便向您推荐：[【测试营养罐头】](/product/1010)";
         }
+
+        String finalAnswer = answer;
+        new Thread(() -> {
+            try {
+                // 模拟网络延迟
+                Thread.sleep(500);
+                // 模拟打字机效果，逐字发送
+                for (char c : finalAnswer.toCharArray()) {
+                    onMessage.accept(String.valueOf(c));
+                    Thread.sleep(30); // 每个字停顿 30ms
+                }
+                onComplete.run();
+            } catch (Exception e) {
+                onError.accept(e);
+            }
+        }).start();
+    }
+
+    @Override
+    public String chat(String question, String context) {
         return ANSWERS.get(random.nextInt(ANSWERS.size()));
     }
 }

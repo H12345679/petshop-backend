@@ -40,7 +40,10 @@ public class AiChatController {
 
     @ApiOperation("AI 流式问答客服")
     @PostMapping(value = "/chat/stream", produces = org.springframework.http.MediaType.TEXT_EVENT_STREAM_VALUE)
-    public org.springframework.web.servlet.mvc.method.annotation.SseEmitter streamChat(@Valid @RequestBody ChatDTO dto, HttpServletRequest request) {
+    public org.springframework.web.servlet.mvc.method.annotation.SseEmitter streamChat(@Valid @RequestBody ChatDTO dto, HttpServletRequest request, javax.servlet.http.HttpServletResponse response) {
+        response.setHeader("Cache-Control", "no-cache");
+        response.setHeader("X-Accel-Buffering", "no");
+        response.setHeader("Connection", "keep-alive");
         Long userId = resolveUserId(request);
         return aiChatService.streamChat(userId, dto.getSessionId(), dto.getQuestion());
     }

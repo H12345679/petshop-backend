@@ -119,8 +119,14 @@ public class DeepSeekAiProvider implements AiProvider {
         try {
             String sysPrompt = "你是一个专业的宠物健康顾问，擅长回答关于猫、狗、兔子、鹦鹉等常见宠物的饲养、健康、营养、行为等问题。请用中文回答，语气亲切专业。如果用户问的不是宠物相关的问题，请友好地引导用户回到宠物话题。";
             if (context != null && !context.trim().isEmpty()) {
-                sysPrompt += "\n【商城在售商品库】：\n" + context +
-                             "\n\n要求：如果用户询问购买建议，请严格从上述商品库中挑选1-3款推荐给他，必须给出推荐理由，并且必须使用Markdown链接格式附带商品链接，例如：[【商品名】](/product/商品ID)。如果商品库中没有合适的，请委婉说明。";
+                sysPrompt += "\n\n【商城在售商品库】：\n" + context +
+                             "\n\n【重要格式规则，必须严格遵守】：\n" +
+                             "1. 推荐商品时，必须使用标准Markdown链接格式，且只能使用此格式：[【商品名】](/product/商品ID)\n" +
+                             "   正确示例：[【宠物营养主食罐头 170g】](/product/1010)\n" +
+                             "   错误示例（禁止使用）：【商品名】（/product/1010）、【商品名】( /product/1010 )、链接：xxx\n" +
+                             "2. 括号必须使用英文半角小括号()，不能使用中文全角括号（）\n" +
+                             "3. URL路径内不能有任何空格\n" +
+                             "4. 如果商品库中没有合适的，请委婉说明。";
             }
 
             Map<String, Object> bodyMap = Map.of(
@@ -145,42 +151,57 @@ public class DeepSeekAiProvider implements AiProvider {
                     .uri(URI.create(apiUrl))
                     .timeout(Duration.ofMillis(timeout))
                     .header("Content-Type", "application/json")
+                    .header("Accept", "text/event-stream")
                     .header("Authorization", "Bearer " + apiKey)
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
-            client.sendAsync(request, HttpResponse.BodyHandlers.ofLines())
-                  .thenAccept(response -> {
-                      if (response.statusCode() >= 400) {
-                          onError.accept(new RuntimeException("API 调用失败，状态码：" + response.statusCode()));
-                          return;
-                      }
-                      response.body().forEach(line -> {
-                          if (line.startsWith("data: ")) {
-                              String data = line.substring(6);
-                              if ("[DONE]".equals(data.trim())) {
-                                  return;
-                              }
-                              try {
-                                  JsonNode root = mapper.readTree(data);
-                                  JsonNode choices = root.path("choices");
-                                  if (choices.isArray() && choices.size() > 0) {
-                                      JsonNode delta = choices.get(0).path("delta");
-                                      if (delta.has("content")) {
-                                          onMessage.accept(delta.get("content").asText());
-                                      }
-                                  }
-                              } catch (Exception e) {
-                                  log.error("解析流式 JSON 异常: {}", data, e);
-                              }
-                          }
-                      });
-                      onComplete.run();
-                  })
-                  .exceptionally(ex -> {
-                      onError.accept(ex);
-                      return null;
-                  });
+            // 发送同步请求，获取 InputStream 确保绝对的流式读取
+            java.net.http.HttpResponse<java.io.InputStream> response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+
+            if (response.statusCode() != 200) {
+                String errorBody = new String(response.body().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                log.error("DeepSeek SSE API 请求失败 [{}]: {}", response.statusCode(), errorBody);
+                onError.accept(new RuntimeException("API 请求失败: " + response.statusCode()));
+                return;
+            }
+
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(response.body(), java.nio.charset.StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.startsWith("data: ")) {
+                        String data = line.substring(6).trim();
+                        if ("[DONE]".equals(data)) {
+                            break;
+                        }
+                        if (data.isEmpty()) {
+                            continue;
+                        }
+                        try {
+                            com.fasterxml.jackson.databind.JsonNode root = mapper.readTree(data);
+                            com.fasterxml.jackson.databind.JsonNode choices = root.path("choices");
+                            if (choices.isArray() && choices.size() > 0) {
+                                com.fasterxml.jackson.databind.JsonNode delta = choices.get(0).path("delta");
+                                
+                                // 处理正文内容
+                                if (delta.has("content")) {
+                                    onMessage.accept(delta.get("content").asText());
+                                }
+                                // 处理思考过程（DeepSeek 可能会有 reasoning_content）
+                                else if (delta.has("reasoning_content")) {
+                                    // 我们也可以将思考过程推给前端，或者暂时忽略。
+                                    // 这里为了不让前端干等，把思考过程也输出（可以加个括号标识）
+                                    // onMessage.accept(delta.get("reasoning_content").asText());
+                                }
+                            }
+                        } catch (Exception ex) {
+                            log.error("解析 SSE 数据行失败: {}", line, ex);
+                        }
+                    }
+                }
+            }
+
+            onComplete.run();
 
         } catch (Exception e) {
             log.error("DeepSeek API 流式调用异常", e);
