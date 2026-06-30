@@ -37,5 +37,9 @@ public class Order extends BaseEntity {
     private String receiverName;
     private String receiverPhone;
     private String receiverAddress;
+    /** 物流公司 */
+    private String courierCompany;
+    /** 物流单号 */
+    private String trackingNumber;
     private String remark;
 }

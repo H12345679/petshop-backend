@@ -18,7 +18,7 @@ public interface OrderService {
      * @return {orderIds, orderNos, totalPayAmount}
      */
     Map<String, Object> createOrder(String requestId, Long userCouponId, Long addressId,
-                                    List<Map<String, Object>> items);
+                                    List<Map<String, Object>> items, String remark);
 
     /** 模拟支付（余额扣款 + SELECT FOR UPDATE 防重）。仅状态 0→1。 */
     void pay(Long orderId, Integer payType);
@@ -27,13 +27,16 @@ public interface OrderService {
     void cancel(Long orderId, String reason);
 
     /** 商家发货（ADMIN/MERCHANT，1→2）。 */
-    void ship(Long orderId);
+    void ship(Long orderId, String courierCompany, String trackingNumber);
 
     /** 用户确认收货（2→3）。 */
     void receive(Long orderId);
 
     /** 我的订单列表（分页）。 */
     PageResult<Map<String, Object>> myOrders(int current, int size, Integer status);
+
+    /** 根据 ID 获取我的订单详情（含 orderItems）。 */
+    Map<String, Object> getOrderById(Long orderId, Long userId);
 
     /** 后台订单管理分页（ADMIN·MERCHANT）。 */
     PageResult<Map<String, Object>> manageOrders(int current, int size, Long shopId,

@@ -27,6 +27,7 @@ import java.util.stream.Collectors;
  * 评价 Service 实现。
  * <p>
  * 关键逻辑：同一 order_item 只能评价一次（uk_item）；全部明细评价完，订单 3→4。
+ * 权限：ADMIN 全站管理，MERCHANT 仅本店。删除和恢复仅 ADMIN。
  */
 @Service
 public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> implements ReviewService {
@@ -43,6 +44,8 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
     private UserMapper userMapper;
     @Autowired
     private OwnershipChecker ownershipChecker;
+    @Autowired
+    private ReviewMapper reviewMapper; // for custom methods
 
     @Override
     @Transactional
@@ -86,7 +89,6 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
         // 6) 检查该订单下所有明细是否都已评价，若全评则订单 3→4
         List<OrderItem> allItems = orderItemMapper.selectList(
                 new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOrderId, order.getId()));
-        // 查询该订单下已有的评价数
         LambdaQueryWrapper<Review> orderReviewWrapper = new LambdaQueryWrapper<>();
         orderReviewWrapper.eq(Review::getOrderId, order.getId());
         long reviewedCount = this.count(orderReviewWrapper);
@@ -116,7 +118,6 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
         if (review == null) throw new BusinessException(ResultCode.NOT_FOUND);
         // 归属校验：商家只能回复自己店铺商品的评价
         ownershipChecker.assertOrderOwned(review.getOrderId());
-        // 实际上应该校验 review.getShopId；这里通过 order→shop 间接校验
 
         review.setReply(reply);
         this.updateById(review);
@@ -133,33 +134,80 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
 
     @Override
     public PageResult<Map<String, Object>> managePage(int current, int size, Long productId,
-                                                       Integer rating, Integer hasReply) {
-        LambdaQueryWrapper<Review> wrapper = new LambdaQueryWrapper<>();
+                                                       Integer rating, Integer hasReply,
+                                                       Integer showDeleted) {
+        List<Review> reviewList;
 
-        // MERCHANT 只看自家店
-        List<Long> shopIds = ownershipChecker.myShopIds();
-        if (shopIds != null) {
-            wrapper.in(Review::getShopId, shopIds);
-        }
-        if (productId != null) {
-            wrapper.eq(Review::getProductId, productId);
-        }
-        if (rating != null) {
-            wrapper.eq(Review::getRating, rating);
-        }
-        if (hasReply != null) {
-            if (hasReply == 1) {
-                wrapper.isNotNull(Review::getReply).ne(Review::getReply, "");
-            } else {
-                wrapper.and(w -> w.isNull(Review::getReply).or().eq(Review::getReply, ""));
+        if (showDeleted != null && showDeleted == 1) {
+            // 查已删除（绕过 MP @TableLogic 自动过滤）
+            List<Long> shopIds = ownershipChecker.myShopIds();
+            Page<Review> page = reviewMapper.selectManageWithDeleted(
+                    new Page<>(current, size), shopIds, productId, rating, hasReply);
+            reviewList = page.getRecords();
+        } else {
+            // 正常查询（MP 自动过滤 deleted=0）
+            LambdaQueryWrapper<Review> wrapper = new LambdaQueryWrapper<>();
+
+            // MERCHANT 只看自家店
+            List<Long> shopIds = ownershipChecker.myShopIds();
+            if (shopIds != null) {
+                wrapper.in(Review::getShopId, shopIds);
             }
-        }
-        wrapper.orderByDesc(Review::getCreateTime);
-        Page<Review> page = this.page(new Page<>(current, size), wrapper);
+            if (productId != null) {
+                wrapper.eq(Review::getProductId, productId);
+            }
+            if (rating != null) {
+                wrapper.eq(Review::getRating, rating);
+            }
+            if (hasReply != null) {
+                if (hasReply == 1) {
+                    wrapper.isNotNull(Review::getReply).ne(Review::getReply, "");
+                } else {
+                    wrapper.and(w -> w.isNull(Review::getReply).or().eq(Review::getReply, ""));
+                }
+            }
+            wrapper.orderByDesc(Review::getCreateTime);
 
-        // 组装结果，附加用户名
+            reviewList = this.page(new Page<>(current, size), wrapper).getRecords();
+        }
+
+        // 组装结果 — 附加用户名/商品名/订单号
+        List<Map<String, Object>> records = buildRecords(reviewList);
+
+        // 获取 total
+        long total;
+        if (showDeleted != null && showDeleted == 1) {
+            List<Long> shopIds = ownershipChecker.myShopIds();
+            total = reviewMapper.countManageWithDeleted(shopIds, productId, rating, hasReply);
+        } else {
+            LambdaQueryWrapper<Review> countWrapper = new LambdaQueryWrapper<>();
+            List<Long> shopIds = ownershipChecker.myShopIds();
+            if (shopIds != null) countWrapper.in(Review::getShopId, shopIds);
+            if (productId != null) countWrapper.eq(Review::getProductId, productId);
+            if (rating != null) countWrapper.eq(Review::getRating, rating);
+            if (hasReply != null) {
+                if (hasReply == 1) {
+                    countWrapper.isNotNull(Review::getReply).ne(Review::getReply, "");
+                } else {
+                    countWrapper.and(w -> w.isNull(Review::getReply).or().eq(Review::getReply, ""));
+                }
+            }
+            total = this.count(countWrapper);
+        }
+
+        PageResult<Map<String, Object>> pr = new PageResult<>();
+        pr.setTotal(total);
+        pr.setPages((long) Math.ceil((double) total / size));
+        pr.setCurrent((long) current);
+        pr.setSize((long) size);
+        pr.setRecords(records);
+        return pr;
+    }
+
+    /** 批量构建评价 VO（含用户名/商品名/规格/订单号） */
+    private List<Map<String, Object>> buildRecords(List<Review> reviewList) {
         List<Map<String, Object>> records = new ArrayList<>();
-        for (Review r : page.getRecords()) {
+        for (Review r : reviewList) {
             Map<String, Object> vo = new LinkedHashMap<>();
             vo.put("id", r.getId());
             vo.put("orderId", r.getOrderId());
@@ -172,21 +220,29 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
             vo.put("images", r.getImages());
             vo.put("reply", r.getReply());
             vo.put("createTime", r.getCreateTime());
+            vo.put("deleted", r.getDeleted());
             // 查用户昵称
             User u = userMapper.selectById(r.getUserId());
             vo.put("username", u != null ? u.getUsername() : "");
             vo.put("nickname", u != null ? u.getNickname() : "");
+            // 查商品信息
+            Product product = productMapper.selectById(r.getProductId());
+            vo.put("productName", product != null ? product.getName() : "");
+            vo.put("productImage", product != null ? product.getMainImage() : "");
+            // 查订单明细（规格名）
+            if (r.getOrderItemId() != null) {
+                OrderItem oi = orderItemMapper.selectById(r.getOrderItemId());
+                vo.put("specName", oi != null ? oi.getSpecName() : "");
+            } else {
+                vo.put("specName", "");
+            }
+            // 查订单号
+            Order order = orderMapper.selectById(r.getOrderId());
+            vo.put("orderNo", order != null ? order.getOrderNo() : "");
 
             records.add(vo);
         }
-
-        PageResult<Map<String, Object>> pr = new PageResult<>();
-        pr.setTotal(page.getTotal());
-        pr.setPages(page.getPages());
-        pr.setCurrent(page.getCurrent());
-        pr.setSize(page.getSize());
-        pr.setRecords(records);
-        return pr;
+        return records;
     }
 
     @Override
@@ -200,5 +256,18 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
         }
         // 逻辑删除（BaseEntity 带 @TableLogic）
         this.removeById(reviewId);
+    }
+
+    @Override
+    @Transactional
+    public void restoreReview(Long reviewId) {
+        // 校验角色
+        if (!"ADMIN".equals(UserContext.getRole())) {
+            throw new BusinessException(ResultCode.FORBIDDEN);
+        }
+        int affected = reviewMapper.restoreById(reviewId);
+        if (affected == 0) {
+            throw new BusinessException("评价不存在或未删除");
+        }
     }
 }

@@ -1,6 +1,7 @@
 package com.petshop.order.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.petshop.common.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -23,8 +24,15 @@ public class Coupon extends BaseEntity {
     private BigDecimal amount;
     private Integer total;
     private Integer remain;
+
+    /** 生效时间 */
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime startTime;
+
+    /** 失效时间 */
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime endTime;
+
     /** 1有效 0停用 */
     private Integer status;
 }

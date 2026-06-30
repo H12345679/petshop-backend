@@ -164,7 +164,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Transactional
     @SuppressWarnings("unchecked")
     public Map<String, Object> createOrder(String requestId, Long userCouponId, Long addressId,
-                                           List<Map<String, Object>> items) {
+                                           List<Map<String, Object>> items, String remark) {
         Long userId = requireUserId();
         if (items == null || items.isEmpty()) {
             throw new BusinessException("购买项不能为空");
@@ -301,6 +301,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             order.setReceiverAddress(addr.getProvince() + addr.getCity()
                     + addr.getDistrict() + addr.getDetail());
 
+            if (remark != null && !remark.isEmpty()) {
+                order.setRemark(remark);
+            }
             this.save(order);
             orderIds.add(order.getId());
             orderNos.add(orderNo);
@@ -389,6 +392,14 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         wrapper.orderByDesc(Order::getCreateTime);
         Page<Order> page = this.page(new Page<>(current, size), wrapper);
         return buildOrderPageResult(page);
+    }
+
+    @Override
+    public Map<String, Object> getOrderById(Long orderId, Long userId) {
+        Order order = this.getById(orderId);
+        if (order == null) throw new BusinessException(ResultCode.NOT_FOUND);
+        if (!userId.equals(order.getUserId())) throw new BusinessException(ResultCode.FORBIDDEN);
+        return buildOrderMap(order);
     }
 
     // ==================== 后台订单管理 ====================
@@ -498,7 +509,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     @Override
     @Transactional
-    public void ship(Long orderId) {
+    public void ship(Long orderId, String courierCompany, String trackingNumber) {
         Order order = this.getById(orderId);
         if (order == null) throw new BusinessException(ResultCode.NOT_FOUND);
         // 归属校验
@@ -508,6 +519,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         OrderStatus.checkTransition(from, 2);
         order.setStatus(2);
         order.setShipTime(LocalDateTime.now());
+        if (courierCompany != null) order.setCourierCompany(courierCompany);
+        if (trackingNumber != null) order.setTrackingNumber(trackingNumber);
         this.updateById(order);
         saveStatusLog(order.getId(), from, 2, UserContext.getUserId(),
                 UserContext.getRole(), "商家发货");
@@ -555,6 +568,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             vo.put("receiverName", order.getReceiverName());
             vo.put("receiverPhone", order.getReceiverPhone());
             vo.put("receiverAddress", order.getReceiverAddress());
+            vo.put("courierCompany", order.getCourierCompany());
+            vo.put("trackingNumber", order.getTrackingNumber());
             vo.put("createTime", order.getCreateTime());
 
             // 查关联明细
@@ -572,6 +587,38 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         pr.setSize(page.getSize());
         pr.setRecords(records);
         return pr;
+    }
+
+    /** 构建单个订单的 Map 数据（含 orderItems 等）。 */
+    private Map<String, Object> buildOrderMap(Order order) {
+        Map<String, Object> vo = new LinkedHashMap<>();
+        vo.put("id", order.getId());
+        vo.put("orderNo", order.getOrderNo());
+        vo.put("userId", order.getUserId());
+        vo.put("shopId", order.getShopId());
+        vo.put("totalAmount", order.getTotalAmount());
+        vo.put("discountAmount", order.getDiscountAmount());
+        vo.put("payAmount", order.getPayAmount());
+        vo.put("couponId", order.getCouponId());
+        vo.put("status", order.getStatus());
+        vo.put("statusName", OrderStatus.of(order.getStatus()) != null
+                ? OrderStatus.of(order.getStatus()).getDesc() : "未知");
+        vo.put("payType", order.getPayType());
+        vo.put("payTime", order.getPayTime());
+        vo.put("shipTime", order.getShipTime());
+        vo.put("receiveTime", order.getReceiveTime());
+        vo.put("cancelReason", order.getCancelReason());
+        vo.put("receiverName", order.getReceiverName());
+        vo.put("receiverPhone", order.getReceiverPhone());
+        vo.put("receiverAddress", order.getReceiverAddress());
+        vo.put("courierCompany", order.getCourierCompany());
+        vo.put("trackingNumber", order.getTrackingNumber());
+        vo.put("createTime", order.getCreateTime());
+        // 关联明细
+        LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
+        oiWrapper.eq(OrderItem::getOrderId, order.getId());
+        vo.put("orderItems", orderItemMapper.selectList(oiWrapper));
+        return vo;
     }
 
     /** 生成订单号：ORD + yyyyMMdd + Redis 自增序号 */

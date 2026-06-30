@@ -48,19 +48,21 @@ public class RefundController {
     }
 
     @ApiOperation("管理员直接退单（ADMIN·MERCHANT，3→-4）")
-    @RequireRole({"ADMIN", "MERCHANT"})
+    @RequireRole("ADMIN")
     @PostMapping("/direct")
     public Result<Void> directRefund(@RequestBody Map<String, Object> body) {
+        // 支持 orderId 或 orderNo
         Long orderId = toLong(body.get("orderId"));
+        String orderNo = (String) body.get("orderNo");
         String reason = (String) body.get("reason");
-        refundService.directRefund(orderId, reason);
+        refundService.directRefundByOrderIdOrNo(orderId, orderNo, reason);
         return Result.success();
     }
 
     @ApiOperation("后台退单列表分页（ADMIN·MERCHANT）")
     @RequireRole({"ADMIN", "MERCHANT"})
     @GetMapping("/manage")
-    public Result<PageResult<Refund>> manage(
+    public Result<PageResult<Map<String, Object>>> manage(
             @RequestParam(defaultValue = "1") Integer current,
             @RequestParam(defaultValue = "10") Integer size,
             @RequestParam(required = false) Long shopId,

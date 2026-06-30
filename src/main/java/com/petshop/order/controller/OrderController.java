@@ -50,7 +50,8 @@ public class OrderController {
                 ? Long.valueOf(body.get("addressId").toString()) : 0L;
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> items = (List<Map<String, Object>>) body.get("items");
-        return Result.success(orderService.createOrder(requestId, couponId, addressId, items));
+        String remark = (String) body.get("remark");
+        return Result.success(orderService.createOrder(requestId, couponId, addressId, items, remark));
     }
 
     @ApiOperation("我的订单列表（分页）")
@@ -73,6 +74,14 @@ public class OrderController {
         return Result.success();
     }
 
+    @ApiOperation("获取我的订单详情（含 orderItems）")
+    @RequireLogin
+    @GetMapping("/{id}")
+    public Result<Map<String, Object>> getOrder(@PathVariable Long id) {
+        Long userId = com.petshop.security.UserContext.getUserId();
+        return Result.success(orderService.getOrderById(id, userId));
+    }
+
     @ApiOperation("取消订单（仅 0/1→-1，回滚库存/优惠券/余额）")
     @RequireLogin
     @PutMapping("/{id}/cancel")
@@ -85,8 +94,10 @@ public class OrderController {
     @ApiOperation("商家发货（ADMIN/MERCHANT，1→2）")
     @RequireRole({"ADMIN", "MERCHANT"})
     @PutMapping("/{id}/ship")
-    public Result<Void> ship(@PathVariable Long id) {
-        orderService.ship(id);
+    public Result<Void> ship(@PathVariable Long id, @RequestBody(required = false) Map<String, Object> body) {
+        String courierCompany = body != null ? (String) body.get("courierCompany") : null;
+        String trackingNumber = body != null ? (String) body.get("trackingNumber") : null;
+        orderService.ship(id, courierCompany, trackingNumber);
         return Result.success();
     }
 
