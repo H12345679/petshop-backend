@@ -123,10 +123,34 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
     }
 
     @Override
-    public Page<Coupon> managePage(int current, int size) {
+    public Page<Coupon> managePage(int current, int size, String name, Integer type, Integer status) {
         LambdaQueryWrapper<Coupon> wrapper = new LambdaQueryWrapper<>();
+        if (name != null && !name.isEmpty()) {
+            wrapper.like(Coupon::getName, name);
+        }
+        if (type != null) {
+            wrapper.eq(Coupon::getType, type);
+        }
+        if (status != null) {
+            wrapper.eq(Coupon::getStatus, status);
+        }
         wrapper.orderByDesc(Coupon::getCreateTime);
         return this.page(new Page<>(current, size), wrapper);
+    }
+
+    @Override
+    @Transactional
+    public void deleteCoupon(Long id) {
+        Coupon exist = this.getById(id);
+        if (exist == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND);
+        }
+        // 删除关联的用户优惠券记录
+        LambdaQueryWrapper<UserCoupon> ucWrapper = new LambdaQueryWrapper<>();
+        ucWrapper.eq(UserCoupon::getCouponId, id);
+        userCouponMapper.delete(ucWrapper);
+        // 删除优惠券本身
+        this.removeById(id);
     }
 
     // ========== 内部 ==========

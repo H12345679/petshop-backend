@@ -30,6 +30,9 @@ public interface CouponService {
     /** 后台编辑/上下架（ADMIN） */
     void updateCoupon(Long id, Coupon coupon);
 
-    /** 后台分页列表（ADMIN） */
-    Page<Coupon> managePage(int current, int size);
+    /** 后台分页列表（ADMIN，支持券名/类型/状态筛选） */
+    Page<Coupon> managePage(int current, int size, String name, Integer type, Integer status);
+
+    /** 后台删除优惠券（ADMIN） */
+    void deleteCoupon(Long id);
 }

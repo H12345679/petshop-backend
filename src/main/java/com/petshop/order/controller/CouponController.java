@@ -71,13 +71,24 @@ public class CouponController {
         return Result.success();
     }
 
+    @ApiOperation("后台删除优惠券（仅 ADMIN）")
+    @RequireRole("ADMIN")
+    @DeleteMapping("/coupons/{id}")
+    public Result<Void> deleteCoupon(@PathVariable Long id) {
+        couponService.deleteCoupon(id);
+        return Result.success();
+    }
+
     @ApiOperation("后台优惠券分页列表（仅 ADMIN）")
     @RequireRole("ADMIN")
     @GetMapping("/coupons/manage")
     public Result<Map<String, Object>> managePage(
             @RequestParam(defaultValue = "1") Integer current,
-            @RequestParam(defaultValue = "10") Integer size) {
-        Page<Coupon> page = couponService.managePage(current, size);
+            @RequestParam(defaultValue = "10") Integer size,
+            @RequestParam(required = false) String name,
+            @RequestParam(required = false) Integer type,
+            @RequestParam(required = false) Integer status) {
+        Page<Coupon> page = couponService.managePage(current, size, name, type, status);
         Map<String, Object> result = new HashMap<>();
         result.put("total", page.getTotal());
         result.put("pages", page.getPages());

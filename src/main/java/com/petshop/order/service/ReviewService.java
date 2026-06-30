@@ -19,10 +19,14 @@ public interface ReviewService {
     /** 查询某商品的所有评价（公开，分页）。 */
     PageResult<Review> productReviews(Long productId, int current, int size);
 
-    /** 后台评价管理列表（ADMIN 全站 / MERCHANT 仅本店）。 */
+    /** 后台评价管理列表（ADMIN 全站 / MERCHANT 仅本店，showDeleted=1 查已删除）。 */
     PageResult<Map<String, Object>> managePage(int current, int size, Long productId,
-                                                Integer rating, Integer hasReply);
+                                                Integer rating, Integer hasReply,
+                                                Integer showDeleted);
 
-    /** 删除违规评价（仅 ADMIN）。 */
+    /** 删除违规评价（仅 ADMIN，逻辑删除）。 */
     void deleteReview(Long reviewId);
+
+    /** 恢复已删除评价（仅 ADMIN）。 */
+    void restoreReview(Long reviewId);
 }
