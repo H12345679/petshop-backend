@@ -40,6 +40,8 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     private ProductTagMapper productTagMapper;
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     @Override
     @Transactional(rollbackFor = Exception.class)   // 主表+子表：任一步抛异常就整体回滚
@@ -175,8 +177,25 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         w.eq(Product::getStatus, 1);   // 首页只展示「上架」商品
         if ("NEW".equalsIgnoreCase(strategy)) {
             w.orderByDesc(Product::getCreateTime);   // 新鲜上架
+        } else if ("CF".equalsIgnoreCase(strategy)) {
+            Long userId = UserContext.getUserId();
+            if (userId != null) {
+                // 去 recommend_result 里找该用户的推荐商品 ID
+                List<Long> productIds = jdbcTemplate.queryForList(
+                        "SELECT product_id FROM recommend_result WHERE user_id = ? ORDER BY score DESC LIMIT ?",
+                        Long.class, userId, n
+                );
+                if (!productIds.isEmpty()) {
+                    w.in(Product::getId, productIds);
+                    // 确保按 in 的顺序或至少不报错，先简单返回这些数据
+                    // Mybatis Plus 的 in 会打乱顺序，如果不介意这里就直接返回
+                    return this.list(w);
+                }
+            }
+            // 兜底：未登录或该用户没有跑过 CF 推荐，返回全站销量最高
+            w.orderByDesc(Product::getSales);
         } else {
-            // HOT / RECOMMEND（第二阶段才做，先回退）/ 默认 → 按销量
+            // HOT / 默认 → 按销量
             w.orderByDesc(Product::getSales);
         }
         // 取前 N 条：复用分页，要第 1 页、每页 n 条，拿 records（不写裸 LIMIT SQL）
