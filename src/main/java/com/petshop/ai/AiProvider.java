@@ -12,6 +12,11 @@ public interface AiProvider {
     /** 根据问题和背景上下文生成回答 */
     String chat(String question, String context);
 
+    /** 流式生成回答 */
+    default void streamChat(String question, String context, java.util.function.Consumer<String> onMessage, Runnable onComplete, java.util.function.Consumer<Throwable> onError) {
+        throw new UnsupportedOperationException("该 AI Provider 暂不支持流式输出");
+    }
+
     /** 根据问题生成回答 */
     default String chat(String question) {
         return chat(question, null);
