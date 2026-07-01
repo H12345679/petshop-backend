@@ -594,7 +594,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                     rabbitTemplate.convertAndSend(RabbitMQConfig.RECOMMEND_EXCHANGE,
                             RabbitMQConfig.BEHAVIOR_ROUTING_KEY,
                             new UserBehaviorMessage(userId, item.getProductId(), 4));
-                } catch (Exception ignore) {}
+                } catch (Exception ignore) {
+                    // 忽略：埋点发送失败不影响主流程
+                }
             }
 
             // 沉淀店铺客户关系
