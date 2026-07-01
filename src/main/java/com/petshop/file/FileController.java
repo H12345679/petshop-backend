@@ -42,6 +42,13 @@ public class FileController {
         return Result.success(wrap(qiniuService.upload(file, "videos")));
     }
 
+    @ApiOperation("上传用户头像，返回可访问 URL")
+    @com.petshop.security.RequireLogin
+    @PostMapping("/avatar")
+    public Result<Map<String, String>> uploadAvatar(@RequestParam("file") MultipartFile file) {
+        return Result.success(wrap(qiniuService.upload(file, "avatars")));
+    }
+
     /** 统一包成 { "url": "..." } 返回，与前端约定一致。 */
     private Map<String, String> wrap(String url) {
         Map<String, String> data = new HashMap<>();
