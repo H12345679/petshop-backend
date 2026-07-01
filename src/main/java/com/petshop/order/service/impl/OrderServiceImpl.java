@@ -623,6 +623,18 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         order.setReceiveTime(LocalDateTime.now());
         this.updateById(order);
         saveStatusLog(order.getId(), from, 3, userId, "USER", "用户确认收货");
+
+        // 确认收货后赠送积分（= 实付金额向下取整，与结算页"预计赠送"口径一致），用于会员升级
+        BigDecimal pay = order.getPayAmount() != null ? order.getPayAmount() : BigDecimal.ZERO;
+        int gained = pay.setScale(0, RoundingMode.DOWN).intValue();
+        if (gained > 0) {
+            User user = userMapper.selectById(userId);
+            if (user != null) {
+                int current = user.getPoints() != null ? user.getPoints() : 0;
+                user.setPoints(current + gained);
+                userMapper.updateById(user);
+            }
+        }
     }
 
     @Override
