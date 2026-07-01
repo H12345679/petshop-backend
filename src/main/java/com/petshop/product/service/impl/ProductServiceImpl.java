@@ -110,13 +110,32 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void updateProduct(Product product) {
         // 按「商品真实归属」校验：防止商家传自己的 shopId 却改别人的商品（越权）
         ownershipChecker.assertProductOwned(product.getId());
         product.setShopId(null);   // 不允许通过修改接口把商品挪到别的店
+        
+        if (product.getType() != null && product.getType() == 1) {
+            product.setStock(1);
+            product.setSkus(null);
+        }
+
         boolean ok = this.updateById(product);
         if (!ok) {
             throw new BusinessException(ResultCode.NOT_FOUND);
+        }
+
+        // 全量替换 SKU：先删后插
+        productSkuMapper.delete(new QueryWrapper<ProductSku>().eq("product_id", product.getId()));
+        
+        List<ProductSku> skus = product.getSkus();
+        if (skus != null && !skus.isEmpty()) {
+            for (ProductSku sku : skus) {
+                sku.setId(null);
+                sku.setProductId(product.getId());
+                productSkuMapper.insert(sku);
+            }
         }
     }
 

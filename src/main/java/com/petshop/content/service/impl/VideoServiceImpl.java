@@ -45,7 +45,12 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
         video.setProductId(dto.getProductId() != null ? dto.getProductId() : 0L);
         video.setShopId(dto.getShopId());
         video.setViews(0);
-        video.setStatus(dto.getStatus() != null ? dto.getStatus() : 1);
+        // 如果是管理员，默认上架(1)；如果是商家或普通用户，强制待审核(2)
+        if ("ADMIN".equals(role)) {
+            video.setStatus(dto.getStatus() != null ? dto.getStatus() : 1);
+        } else {
+            video.setStatus(2);
+        }
         save(video);
         return video;
     }
@@ -54,14 +59,50 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
     public PageResult<Video> pageVideos(VideoPageQuery query) {
         Page<Video> page = query.toPage();
         LambdaQueryWrapper<Video> wrapper = new LambdaQueryWrapper<Video>()
+                .eq(Video::getStatus, 1) // 公开接口仅返回已通过(上架)的视频
+                .like(StringUtils.hasText(query.getTitle()), Video::getTitle, query.getTitle())
+                .eq(query.getProductId() != null && query.getProductId() > 0,
+                        Video::getProductId, query.getProductId())
+                .eq(query.getShopId() != null, Video::getShopId, query.getShopId())
+                .orderByDesc(Video::getCreateTime);
+
+        // 分类过滤逻辑 (沿用原逻辑)
+        if (query.getProductCategoryId() != null && query.getProductCategoryId() > 0) {
+            List<Product> products = productService.list(new LambdaQueryWrapper<Product>()
+                    .eq(Product::getCategoryId, query.getProductCategoryId()));
+            if (!products.isEmpty()) {
+                List<Long> productIds = products.stream().map(Product::getId).collect(java.util.stream.Collectors.toList());
+                wrapper.in(Video::getProductId, productIds);
+            } else {
+                wrapper.eq(Video::getProductId, -1L);
+            }
+        }
+
+        return PageResult.of(page(page, wrapper));
+    }
+
+    @Override
+    public PageResult<Video> manageVideos(VideoPageQuery query) {
+        Page<Video> page = query.toPage();
+        LambdaQueryWrapper<Video> wrapper = new LambdaQueryWrapper<Video>()
                 .like(StringUtils.hasText(query.getTitle()), Video::getTitle, query.getTitle())
                 .eq(query.getProductId() != null && query.getProductId() > 0,
                         Video::getProductId, query.getProductId())
                 .eq(query.getShopId() != null, Video::getShopId, query.getShopId())
                 .eq(query.getStatus() != null, Video::getStatus, query.getStatus())
-                .inSql(query.getProductCategoryId() != null && query.getProductCategoryId() > 0,
-                        Video::getProductId, "SELECT id FROM product WHERE category_id = " + query.getProductCategoryId())
                 .orderByDesc(Video::getCreateTime);
+
+        // 分类过滤逻辑
+        if (query.getProductCategoryId() != null && query.getProductCategoryId() > 0) {
+            List<Product> products = productService.list(new LambdaQueryWrapper<Product>()
+                    .eq(Product::getCategoryId, query.getProductCategoryId()));
+            if (!products.isEmpty()) {
+                List<Long> productIds = products.stream().map(Product::getId).collect(java.util.stream.Collectors.toList());
+                wrapper.in(Video::getProductId, productIds);
+            } else {
+                wrapper.eq(Video::getProductId, -1L);
+            }
+        }
 
         // MERCHANT 只看自己名下店铺的视频；ADMIN/null/empty 不过滤
         List<Long> shopIds = ownershipChecker.myShopIds();
@@ -122,7 +163,14 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
         if (StringUtils.hasText(dto.getUrl()))          update.setUrl(dto.getUrl());
         if (StringUtils.hasText(dto.getDescription()))  update.setDescription(dto.getDescription());
         if (dto.getProductId() != null)                 update.setProductId(dto.getProductId());
-        if (dto.getStatus() != null)                    update.setStatus(dto.getStatus());
+        
+        // 只有管理员可以修改状态；如果是商家修改视频，强制将其重置为待审核(2)
+        if ("ADMIN".equals(role)) {
+            if (dto.getStatus() != null) update.setStatus(dto.getStatus());
+        } else {
+            update.setStatus(2);
+        }
+        
         updateById(update);
     }
 
