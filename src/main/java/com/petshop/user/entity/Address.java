@@ -18,6 +18,8 @@ public class Address extends BaseEntity {
     private String city;
     private String district;
     private String detail;
+    private java.math.BigDecimal longitude;
+    private java.math.BigDecimal latitude;
     /** 1默认 0非默认 */
     private Integer isDefault;
 }

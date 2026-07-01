@@ -26,6 +26,9 @@ public class AddressDTO {
     @NotBlank(message = "详细地址不能为空")
     private String detail;
 
+    private java.math.BigDecimal longitude;
+    private java.math.BigDecimal latitude;
+
     /** 1默认 0非默认 */
     private Integer isDefault;
 }

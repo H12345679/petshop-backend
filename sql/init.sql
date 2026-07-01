@@ -172,6 +172,8 @@ CREATE TABLE IF NOT EXISTS address (
     city        VARCHAR(50)  NULL COMMENT '市',
     district    VARCHAR(50)  NULL COMMENT '区/县',
     detail      VARCHAR(255) NOT NULL COMMENT '详细地址',
+    longitude   DECIMAL(10, 6) NULL COMMENT '经度',
+    latitude    DECIMAL(10, 6) NULL COMMENT '纬度',
     is_default  TINYINT      NOT NULL DEFAULT 0 COMMENT '1默认 0非默认',
     create_time DATETIME     NULL,
     update_time DATETIME     NULL,

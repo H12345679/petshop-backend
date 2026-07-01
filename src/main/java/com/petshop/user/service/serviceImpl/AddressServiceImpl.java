@@ -50,6 +50,8 @@ public class AddressServiceImpl implements AddressService {
         addr.setCity(dto.getCity());
         addr.setDistrict(dto.getDistrict());
         addr.setDetail(dto.getDetail());
+        addr.setLongitude(dto.getLongitude());
+        addr.setLatitude(dto.getLatitude());
         addr.setIsDefault(dto.getIsDefault() != null ? dto.getIsDefault() : 0);
 
         addressMapper.insert(addr);
@@ -78,6 +80,8 @@ public class AddressServiceImpl implements AddressService {
         if (dto.getCity() != null) addr.setCity(dto.getCity());
         if (dto.getDistrict() != null) addr.setDistrict(dto.getDistrict());
         if (dto.getDetail() != null) addr.setDetail(dto.getDetail());
+        if (dto.getLongitude() != null) addr.setLongitude(dto.getLongitude());
+        if (dto.getLatitude() != null) addr.setLatitude(dto.getLatitude());
         if (dto.getIsDefault() != null) addr.setIsDefault(dto.getIsDefault());
 
         addressMapper.updateById(addr);
