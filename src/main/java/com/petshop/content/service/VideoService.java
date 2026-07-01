@@ -34,6 +34,11 @@ public interface VideoService extends IService<Video> {
     PageResult<Video> pageVideos(VideoPageQuery query);
 
     /**
+     * 分页查询视频列表（后台管理用，可查所有状态）
+     */
+    PageResult<Video> manageVideos(VideoPageQuery query);
+
+    /**
      * 获取视频详情（含关联商品基本信息），并将播放量 +1
      *
      * @param id 视频ID

@@ -81,6 +81,15 @@ public class VideoController {
         return Result.success(videoService.pageVideos(query));
     }
 
+    // ==================== E2 - 视频分页列表（后台管理） ====================
+
+    @ApiOperation("视频分页列表（后台管理，支持所有状态过滤）")
+    @RequireRole({"ADMIN", "MERCHANT"})
+    @GetMapping("/manage")
+    public Result<PageResult<Video>> manageVideos(VideoPageQuery query) {
+        return Result.success(videoService.manageVideos(query));
+    }
+
     // ==================== E2 - 视频详情（公开，播放量+1） ====================
 
     @ApiOperation("视频详情（播放量自动+1，含关联商品名称/图片/价格，用于播放页'可跳商品'功能）")
