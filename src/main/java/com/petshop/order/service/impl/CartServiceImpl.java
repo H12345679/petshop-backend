@@ -13,6 +13,8 @@ import com.petshop.product.entity.ProductSku;
 import com.petshop.product.mapper.ProductMapper;
 import com.petshop.product.mapper.ProductSkuMapper;
 import com.petshop.security.UserContext;
+import com.petshop.shop.entity.Shop;
+import com.petshop.shop.mapper.ShopMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -32,6 +34,8 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
     private ProductMapper productMapper;
     @Autowired
     private ProductSkuMapper productSkuMapper;
+    @Autowired
+    private ShopMapper shopMapper;
 
     @Autowired
     private com.petshop.user.service.MembershipLevelService membershipLevelService;
@@ -75,7 +79,7 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
         cartItem.setUserId(userId);
         cartItem.setSkuId(skuId);
         cartItem.setQuantity(qty);
-        cartItem.setSelected(1); // 默认勾选
+        cartItem.setSelected(0); // 默认不勾选
         this.save(cartItem);
     }
 
@@ -128,6 +132,10 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
                 vo.put("productName", product.getName());
                 vo.put("productImage", product.getMainImage());
                 vo.put("productStatus", product.getStatus());
+                vo.put("shopId", product.getShopId());
+                // 查店铺名称
+                Shop shop = shopMapper.selectById(product.getShopId());
+                vo.put("shopName", shop != null ? shop.getName() : "");
             }
 
             // 规格信息 + 实时价格与库存

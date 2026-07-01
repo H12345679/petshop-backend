@@ -12,6 +12,7 @@ import com.petshop.common.PageResult;
 import com.petshop.common.ResultCode;
 import com.petshop.order.entity.*;
 import com.petshop.order.mapper.*;
+import com.petshop.order.service.CartService;
 import com.petshop.order.service.OrderService;
 import com.petshop.product.entity.Product;
 import com.petshop.product.entity.ProductSku;
@@ -19,6 +20,8 @@ import com.petshop.product.mapper.ProductMapper;
 import com.petshop.product.mapper.ProductSkuMapper;
 import com.petshop.security.OwnershipChecker;
 import com.petshop.security.UserContext;
+import com.petshop.shop.entity.Shop;
+import com.petshop.shop.mapper.ShopMapper;
 import com.petshop.user.entity.Address;
 import com.petshop.user.entity.User;
 import com.petshop.user.mapper.AddressMapper;
@@ -71,6 +74,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     private AddressMapper addressMapper;
     @Autowired
     private UserMapper userMapper;
+    @Autowired
+    private ShopMapper shopMapper;
+    @Autowired
+    private CartItemMapper cartItemMapper;
     @Autowired
     private RedisUtil redisUtil;
     @Autowired
@@ -362,6 +369,13 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                             .eq(Product::getId, line.product.getId())
                             .setSql("stock = stock - " + line.qty));
                 }
+
+                // 清除购物车中已下单的商品（按 userId + productId + skuId 匹配）
+                Long targetSkuId = (line.skuId != null && line.skuId != 0) ? line.skuId : 0L;
+                cartItemMapper.delete(new LambdaQueryWrapper<CartItem>()
+                        .eq(CartItem::getUserId, userId)
+                        .eq(CartItem::getProductId, line.product.getId())
+                        .eq(CartItem::getSkuId, targetSkuId));
             }
 
             // 回填 user_coupon 的 orderId
@@ -493,6 +507,60 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     @Override
     @Transactional
+    public void batchPay(List<Long> orderIds, Integer payType) {
+        Long userId = requireUserId();
+        if (orderIds == null || orderIds.isEmpty()) {
+            throw new BusinessException("订单ID列表不能为空");
+        }
+
+        // 1) 查询所有待支付订单并校验
+        List<Order> orders = new ArrayList<>();
+        BigDecimal totalPayAmount = BigDecimal.ZERO;
+        for (Long orderId : orderIds) {
+            Order order = this.getById(orderId);
+            if (order == null) throw new BusinessException("订单不存在（id=" + orderId + "）");
+            if (!userId.equals(order.getUserId())) throw new BusinessException("无权支付该订单");
+            if (order.getStatus() == null || order.getStatus() != 0) {
+                throw new BusinessException("订单状态不允许支付（id=" + orderId + "）");
+            }
+            orders.add(order);
+            totalPayAmount = totalPayAmount.add(order.getPayAmount());
+        }
+
+        // 2) 扣余额（一次性扣除总金额）
+        User user = userMapper.selectById(userId);
+        if (user == null) throw new BusinessException("用户不存在");
+        if (user.getBalance() == null || user.getBalance().compareTo(totalPayAmount) < 0) {
+            throw new BusinessException("余额不足");
+        }
+        user.setBalance(user.getBalance().subtract(totalPayAmount));
+        userMapper.updateById(user);
+
+        // 3) 批量更新订单状态
+        for (Order order : orders) {
+            int from = order.getStatus();
+            order.setStatus(1);
+            order.setPayType(payType != null ? payType : 1);
+            order.setPayTime(LocalDateTime.now());
+            this.updateById(order);
+            saveStatusLog(order.getId(), from, 1, userId, "USER", "批量支付");
+
+            // 记录购买行为埋点
+            LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
+            oiWrapper.eq(OrderItem::getOrderId, order.getId());
+            List<OrderItem> items = orderItemMapper.selectList(oiWrapper);
+            for (OrderItem item : items) {
+                UserBehavior behavior = new UserBehavior();
+                behavior.setUserId(userId);
+                behavior.setProductId(item.getProductId());
+                behavior.setBehaviorType(4);
+                userBehaviorMapper.insert(behavior);
+            }
+        }
+    }
+
+    @Override
+    @Transactional
     public void cancel(Long orderId, String reason) {
         Long userId = requireUserId();
         Order order = this.getById(orderId);
@@ -559,6 +627,30 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         saveStatusLog(order.getId(), from, 3, userId, "USER", "用户确认收货");
     }
 
+    @Override
+    @Transactional
+    public void deleteOrder(Long orderId) {
+        Long userId = requireUserId();
+        Order order = this.getById(orderId);
+        if (order == null) throw new BusinessException(ResultCode.NOT_FOUND);
+        if (!userId.equals(order.getUserId())) throw new BusinessException(ResultCode.FORBIDDEN);
+
+        // 仅终态订单可删除：已取消、已完成、已退款
+        if (order.getStatus() != -1 && order.getStatus() != 4
+                && order.getStatus() != -3 && order.getStatus() != -4) {
+            throw new BusinessException("仅已取消/已完成/已退款的订单可以删除");
+        }
+
+        // 先删明细（物理删，order_item 继承 BaseEntity 有 @TableLogic 软删）
+        orderItemMapper.delete(new LambdaQueryWrapper<OrderItem>()
+                .eq(OrderItem::getOrderId, orderId));
+        // 删状态日志
+        orderStatusLogMapper.delete(new LambdaQueryWrapper<OrderStatusLog>()
+                .eq(OrderStatusLog::getOrderId, orderId));
+        // 删订单（软删）
+        this.removeById(orderId);
+    }
+
     // ==================== 内部工具 ====================
 
     /** 将分页订单结果包装为含 orderItems 的 PageResult */
@@ -570,6 +662,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             vo.put("orderNo", order.getOrderNo());
             vo.put("userId", order.getUserId());
             vo.put("shopId", order.getShopId());
+            Shop shop = shopMapper.selectById(order.getShopId());
+            vo.put("shopName", shop != null ? shop.getName() : "");
             vo.put("totalAmount", order.getTotalAmount());
             vo.put("discountAmount", order.getDiscountAmount());
             vo.put("payAmount", order.getPayAmount());
@@ -613,6 +707,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         vo.put("orderNo", order.getOrderNo());
         vo.put("userId", order.getUserId());
         vo.put("shopId", order.getShopId());
+        // 查店铺名称
+        Shop shop = shopMapper.selectById(order.getShopId());
+        vo.put("shopName", shop != null ? shop.getName() : "");
         vo.put("totalAmount", order.getTotalAmount());
         vo.put("discountAmount", order.getDiscountAmount());
         vo.put("payAmount", order.getPayAmount());

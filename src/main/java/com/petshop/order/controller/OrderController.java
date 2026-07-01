@@ -74,6 +74,18 @@ public class OrderController {
         return Result.success();
     }
 
+    @ApiOperation("批量支付（合并支付多个订单）")
+    @RequireLogin
+    @PostMapping("/batch-pay")
+    public Result<Void> batchPay(@RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Long> orderIds = (List<Long>) body.get("orderIds");
+        Integer payType = body.get("payType") != null
+                ? Integer.valueOf(body.get("payType").toString()) : 1;
+        orderService.batchPay(orderIds, payType);
+        return Result.success();
+    }
+
     @ApiOperation("获取我的订单详情（含 orderItems）")
     @RequireLogin
     @GetMapping("/{id}")
@@ -106,6 +118,14 @@ public class OrderController {
     @PutMapping("/{id}/receive")
     public Result<Void> receive(@PathVariable Long id) {
         orderService.receive(id);
+        return Result.success();
+    }
+
+    @ApiOperation("删除订单（仅终态：已取消/已完成/已退款）")
+    @RequireLogin
+    @DeleteMapping("/{id}")
+    public Result<Void> deleteOrder(@PathVariable Long id) {
+        orderService.deleteOrder(id);
         return Result.success();
     }
 
