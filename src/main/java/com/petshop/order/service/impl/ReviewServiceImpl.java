@@ -138,26 +138,6 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
                                                        Integer showDeleted) {
         List<Review> reviewList;
 
-        // MERCHANT 只看自家店
-        List<Long> shopIds = ownershipChecker.myShopIds();
-        if (shopIds != null) {
-            if (shopIds.isEmpty()) {
-                wrapper.eq(Review::getId, -1L);
-            } else {
-                wrapper.in(Review::getShopId, shopIds);
-            }
-        }
-        if (productId != null) {
-            wrapper.eq(Review::getProductId, productId);
-        }
-        if (rating != null) {
-            wrapper.eq(Review::getRating, rating);
-        }
-        if (hasReply != null) {
-            if (hasReply == 1) {
-                wrapper.isNotNull(Review::getReply).ne(Review::getReply, "");
-            } else {
-                wrapper.and(w -> w.isNull(Review::getReply).or().eq(Review::getReply, ""));
         if (showDeleted != null && showDeleted == 1) {
             // 查已删除（绕过 MP @TableLogic 自动过滤）
             List<Long> shopIds = ownershipChecker.myShopIds();
@@ -171,7 +151,11 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
             // MERCHANT 只看自家店
             List<Long> shopIds = ownershipChecker.myShopIds();
             if (shopIds != null) {
-                wrapper.in(Review::getShopId, shopIds);
+                if (shopIds.isEmpty()) {
+                    wrapper.eq(Review::getId, -1L);
+                } else {
+                    wrapper.in(Review::getShopId, shopIds);
+                }
             }
             if (productId != null) {
                 wrapper.eq(Review::getProductId, productId);
@@ -202,7 +186,13 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
         } else {
             LambdaQueryWrapper<Review> countWrapper = new LambdaQueryWrapper<>();
             List<Long> shopIds = ownershipChecker.myShopIds();
-            if (shopIds != null) countWrapper.in(Review::getShopId, shopIds);
+            if (shopIds != null) {
+                if (shopIds.isEmpty()) {
+                    countWrapper.eq(Review::getId, -1L);
+                } else {
+                    countWrapper.in(Review::getShopId, shopIds);
+                }
+            }
             if (productId != null) countWrapper.eq(Review::getProductId, productId);
             if (rating != null) countWrapper.eq(Review::getRating, rating);
             if (hasReply != null) {
