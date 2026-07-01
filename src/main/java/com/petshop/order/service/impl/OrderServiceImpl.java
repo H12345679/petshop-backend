@@ -28,7 +28,10 @@ import com.petshop.user.mapper.AddressMapper;
 import com.petshop.user.mapper.UserMapper;
 import com.petshop.content.entity.UserBehavior;
 import com.petshop.content.mapper.UserBehaviorMapper;
+import com.petshop.config.RabbitMQConfig;
+import com.petshop.recommend.model.dto.UserBehaviorMessage;
 import com.petshop.util.RedisUtil;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
@@ -85,6 +88,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     /** 直接注入 RedisTemplate 用于 increment 操作 */
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
+    /** 购买行为发 MQ，供推荐系统实时画像消费（与浏览/收藏/加购口径一致） */
+    @Autowired
+    private RabbitTemplate rabbitTemplate;
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String REDIS_REQUEST_ID_PREFIX = "order:requestId:";
@@ -513,6 +519,14 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             behavior.setProductId(item.getProductId());
             behavior.setBehaviorType(4);
             userBehaviorMapper.insert(behavior);
+            // 购买行为同步发 MQ，更新用户实时标签画像；MQ 不可用不应影响支付
+            try {
+                rabbitTemplate.convertAndSend(RabbitMQConfig.RECOMMEND_EXCHANGE,
+                        RabbitMQConfig.BEHAVIOR_ROUTING_KEY,
+                        new UserBehaviorMessage(userId, item.getProductId(), 4));
+            } catch (Exception ignore) {
+                // 忽略：埋点发送失败不影响主流程
+            }
         }
 
         // 沉淀店铺客户关系

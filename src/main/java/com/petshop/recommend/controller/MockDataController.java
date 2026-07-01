@@ -1,6 +1,7 @@
 package com.petshop.recommend.controller;
 
 import com.petshop.common.Result;
+import com.petshop.security.RequireRole;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,6 +17,7 @@ import java.util.Random;
 
 @RestController
 @RequestMapping("/api/recommend/test")
+@RequireRole("ADMIN")   // 造数/跑批会删改 user 与评分表，仅管理员可调
 public class MockDataController {
 
     @Autowired
