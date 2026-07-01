@@ -24,6 +24,12 @@ public class Product extends BaseEntity {
     /** 售价(无规格时用) */
     private BigDecimal price;
     private BigDecimal originalPrice;
+    /** 用户专享折扣比例 (如 0.95，无折扣为 1.0) */
+    @TableField(exist = false)
+    private BigDecimal userDiscount;
+    /** 用户会员等级名称 (如 "银卡会员") */
+    @TableField(exist = false)
+    private String userLevelName;
     /** 库存(无规格时用) */
     private Integer stock;
     private Integer sales;

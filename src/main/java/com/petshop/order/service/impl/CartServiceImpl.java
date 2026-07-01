@@ -1,6 +1,7 @@
 package com.petshop.order.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.petshop.common.BusinessException;
 import com.petshop.common.ResultCode;
@@ -31,6 +32,9 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
     private ProductMapper productMapper;
     @Autowired
     private ProductSkuMapper productSkuMapper;
+
+    @Autowired
+    private com.petshop.user.service.MembershipLevelService membershipLevelService;
 
     @Override
     public void addToCart(CartItem cartItem) {
@@ -101,10 +105,11 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
 
     @Override
     public List<Map<String, Object>> getCartList() {
-        Long userId = requireUserId();
-        LambdaQueryWrapper<CartItem> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(CartItem::getUserId, userId).orderByDesc(CartItem::getCreateTime);
-        List<CartItem> items = this.list(wrapper);
+        Long userId = UserContext.getUserId();
+        List<CartItem> items = baseMapper.selectList(
+                new QueryWrapper<CartItem>().eq("user_id", userId).orderByDesc("create_time"));
+
+        java.math.BigDecimal discount = membershipLevelService.getCurrentUserDiscount();
 
         List<Map<String, Object>> result = new ArrayList<>();
         for (CartItem item : items) {
@@ -131,7 +136,7 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
                 ProductSku sku = productSkuMapper.selectById(item.getSkuId());
                 if (sku != null) {
                     vo.put("specName", sku.getSpecName());
-                    vo.put("price", sku.getPrice());
+                    vo.put("price", sku.getPrice() != null ? sku.getPrice().multiply(discount) : null);
                     vo.put("stock", sku.getStock());
                     vo.put("skuDeleted", sku.getDeleted());
                     if (sku.getDeleted() != null && sku.getDeleted() == 1) valid = 0;
@@ -142,7 +147,7 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
             } else {
                 if (product != null) {
                     vo.put("specName", "");
-                    vo.put("price", product.getPrice());
+                    vo.put("price", product.getPrice() != null ? product.getPrice().multiply(discount) : null);
                     vo.put("stock", product.getStock());
                 }
             }

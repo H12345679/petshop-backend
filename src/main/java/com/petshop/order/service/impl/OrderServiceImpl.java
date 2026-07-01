@@ -50,6 +50,10 @@ import java.util.stream.Collectors;
 public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements OrderService {
 
     @Autowired
+    private CartItemMapper cartItemMapper;
+    @Autowired
+    private com.petshop.user.service.MembershipLevelService membershipLevelService;
+    @Autowired
     private OrderItemMapper orderItemMapper;
     @Autowired
     private OrderStatusLogMapper orderStatusLogMapper;
@@ -110,7 +114,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             totalAmount = totalAmount.add(price.multiply(BigDecimal.valueOf(qty)));
         }
 
-        // 2) 优惠券折扣试算
+        // 2) 会员折扣试算
+        java.math.BigDecimal userDiscountRate = membershipLevelService.getCurrentUserDiscount();
+        BigDecimal memberDiscount = totalAmount.multiply(BigDecimal.ONE.subtract(userDiscountRate));
+        BigDecimal amountAfterMember = totalAmount.subtract(memberDiscount);
+
+        // 3) 优惠券折扣试算
         BigDecimal couponDiscount = BigDecimal.ZERO;
         Long effectiveUserCouponId = 0L;
         if (userCouponId != null && userCouponId > 0) {
@@ -125,13 +134,13 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             if (coupon != null && coupon.getStatus() == 1
                     && !LocalDateTime.now().isBefore(coupon.getStartTime())
                     && !LocalDateTime.now().isAfter(coupon.getEndTime())) {
-                if (totalAmount.compareTo(coupon.getThreshold()) >= 0) {
+                if (amountAfterMember.compareTo(coupon.getThreshold()) >= 0) {
                     if (coupon.getType() == 1) {
                         // 满减
                         couponDiscount = coupon.getAmount();
                     } else if (coupon.getType() == 2) {
                         // 折扣：amount = 0.9 表示 9 折
-                        couponDiscount = totalAmount.multiply(
+                        couponDiscount = amountAfterMember.multiply(
                                 BigDecimal.ONE.subtract(coupon.getAmount()));
                     }
                     effectiveUserCouponId = userCouponId;
@@ -139,8 +148,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             }
         }
 
-        // 3) 会员折扣：第一阶段固定 0.00（预留口子给 B 模块第二阶段注入）
-        BigDecimal memberDiscount = BigDecimal.ZERO;
+        // memberDiscount 已在上面计算
 
         // 4) 组装响应
         BigDecimal discountAmount = memberDiscount.add(couponDiscount);
@@ -227,6 +235,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 .map(l -> l.price.multiply(BigDecimal.valueOf(l.qty)))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
+        // 4.5) 会员折扣试算
+        java.math.BigDecimal userDiscountRate = membershipLevelService.getCurrentUserDiscount();
+        BigDecimal totalMemberDiscount = totalOrderAmount.multiply(BigDecimal.ONE.subtract(userDiscountRate));
+        BigDecimal amountAfterMember = totalOrderAmount.subtract(totalMemberDiscount);
+
         // 5) 优惠券 CAS 锁定
         BigDecimal totalCouponDiscount = BigDecimal.ZERO;
         UserCoupon usedUc = null;
@@ -240,13 +253,13 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                     || LocalDateTime.now().isAfter(coupon.getEndTime())) {
                 throw new BusinessException("优惠券不在有效期");
             }
-            if (totalOrderAmount.compareTo(coupon.getThreshold()) < 0) {
+            if (amountAfterMember.compareTo(coupon.getThreshold()) < 0) {
                 throw new BusinessException("未达到优惠券门槛（满 " + coupon.getThreshold() + " 可用）");
             }
             if (coupon.getType() == 1) {
                 totalCouponDiscount = coupon.getAmount();
             } else if (coupon.getType() == 2) {
-                totalCouponDiscount = totalOrderAmount.multiply(BigDecimal.ONE.subtract(coupon.getAmount()));
+                totalCouponDiscount = amountAfterMember.multiply(BigDecimal.ONE.subtract(coupon.getAmount()));
             }
 
             // CAS 乐观锁扣券
@@ -262,7 +275,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
 
         // 6) 逐店创建订单
-        BigDecimal totalPayAmount = totalOrderAmount.subtract(totalCouponDiscount);
+        BigDecimal totalPayAmount = totalOrderAmount.subtract(totalCouponDiscount).subtract(totalMemberDiscount);
         if (totalPayAmount.compareTo(BigDecimal.ZERO) < 0) totalPayAmount = BigDecimal.ZERO;
 
         String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));

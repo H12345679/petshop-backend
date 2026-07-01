@@ -77,4 +77,32 @@ public class MembershipLevelServiceImpl implements MembershipLevelService {
 
         return new UpgradeVO(oldLevelName, bestLevel.getName(), currentPoints);
     }
+
+    @Override
+    public java.math.BigDecimal getCurrentUserDiscount() {
+        Long userId = com.petshop.security.UserContext.getUserId();
+        if (userId == null) {
+            return java.math.BigDecimal.ONE;
+        }
+        User user = userMapper.selectById(userId);
+        if (user == null || user.getMemberLevelId() == null || user.getMemberLevelId() <= 0) {
+            return java.math.BigDecimal.ONE;
+        }
+        MembershipLevel level = membershipLevelMapper.selectById(user.getMemberLevelId());
+        if (level == null || level.getDiscount() == null) {
+            return java.math.BigDecimal.ONE;
+        }
+        return level.getDiscount();
+    }
+
+    @Override
+    public String getCurrentUserLevelName() {
+        Long userId = com.petshop.security.UserContext.getUserId();
+        if (userId == null) return null;
+        User user = userMapper.selectById(userId);
+        if (user == null || user.getMemberLevelId() == null || user.getMemberLevelId() <= 0) return null;
+        MembershipLevel level = membershipLevelMapper.selectById(user.getMemberLevelId());
+        if (level == null) return null;
+        return level.getName();
+    }
 }

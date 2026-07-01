@@ -42,6 +42,31 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     private StringRedisTemplate stringRedisTemplate;
     @Autowired
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    @Autowired
+    private com.petshop.user.service.MembershipLevelService membershipLevelService;
+
+    private void applyDiscount(Product product) {
+        if (product == null) return;
+        java.math.BigDecimal discount = membershipLevelService.getCurrentUserDiscount();
+        if (discount.compareTo(java.math.BigDecimal.ONE) < 0) {
+            product.setOriginalPrice(product.getPrice());
+            if (product.getPrice() != null) {
+                product.setPrice(product.getPrice().multiply(discount));
+            }
+            product.setUserDiscount(discount);
+            product.setUserLevelName(membershipLevelService.getCurrentUserLevelName());
+            if (product.getSkus() != null) {
+                for (ProductSku sku : product.getSkus()) {
+                    if (sku.getPrice() != null) {
+                        sku.setPrice(sku.getPrice().multiply(discount));
+                    }
+                    sku.setUserDiscount(discount);
+                }
+            }
+        } else {
+            product.setUserDiscount(java.math.BigDecimal.ONE);
+        }
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)   // 主表+子表：任一步抛异常就整体回滚
@@ -80,6 +105,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         List<ProductSku> skus = productSkuMapper.selectList(
                 new QueryWrapper<ProductSku>().eq("product_id", id));
         product.setSkus(skus);
+        applyDiscount(product);
         return product;
     }
 
@@ -161,7 +187,13 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
             w.orderByDesc(Product::getCreateTime);
         }
 
-        return PageResult.of(this.page(query.toPage(), w));
+        Page<Product> pageInfo = this.page(query.toPage(), w);
+        if (pageInfo.getRecords() != null) {
+            for (Product p : pageInfo.getRecords()) {
+                applyDiscount(p);
+            }
+        }
+        return PageResult.of(pageInfo);
     }
 
     @Override
@@ -189,7 +221,13 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
                     w.in(Product::getId, productIds);
                     // 确保按 in 的顺序或至少不报错，先简单返回这些数据
                     // Mybatis Plus 的 in 会打乱顺序，如果不介意这里就直接返回
-                    return this.list(w);
+                    List<Product> list = this.list(w);
+                    if (list != null) {
+                        for (Product p : list) {
+                            applyDiscount(p);
+                        }
+                    }
+                    return list;
                 }
             }
             // 兜底：未登录或该用户没有跑过 CF 推荐，返回全站销量最高
@@ -199,7 +237,13 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
             w.orderByDesc(Product::getSales);
         }
         // 取前 N 条：复用分页，要第 1 页、每页 n 条，拿 records（不写裸 LIMIT SQL）
-        return this.page(new Page<>(1, n), w).getRecords();
+        List<Product> list = this.page(new Page<>(1, n), w).getRecords();
+        if (list != null) {
+            for (Product p : list) {
+                applyDiscount(p);
+            }
+        }
+        return list;
     }
 
     private List<Product> recommendProducts(int n) {
@@ -255,6 +299,11 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
             }
         }
 
+        if (recommendList != null) {
+            for (Product p : recommendList) {
+                applyDiscount(p);
+            }
+        }
         return recommendList;
     }
 
