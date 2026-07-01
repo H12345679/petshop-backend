@@ -22,6 +22,7 @@ import com.petshop.security.OwnershipChecker;
 import com.petshop.security.UserContext;
 import com.petshop.shop.entity.Shop;
 import com.petshop.shop.mapper.ShopMapper;
+import com.petshop.shop.mapper.ShopCustomerMapper;
 import com.petshop.user.entity.Address;
 import com.petshop.user.entity.User;
 import com.petshop.user.mapper.AddressMapper;
@@ -76,6 +77,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     private UserMapper userMapper;
     @Autowired
     private ShopMapper shopMapper;
+    @Autowired
+    private ShopCustomerMapper shopCustomerMapper;
     @Autowired
     private RedisUtil redisUtil;
     @Autowired
@@ -501,6 +504,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             behavior.setBehaviorType(4);
             userBehaviorMapper.insert(behavior);
         }
+
+        // 沉淀店铺客户关系
+        if (order.getShopId() != null && order.getShopId() > 0) {
+            shopCustomerMapper.insertOrUpdatePurchaseTime(order.getShopId(), userId);
+        }
     }
 
     @Override
@@ -553,6 +561,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 behavior.setProductId(item.getProductId());
                 behavior.setBehaviorType(4);
                 userBehaviorMapper.insert(behavior);
+            }
+
+            // 沉淀店铺客户关系
+            if (order.getShopId() != null && order.getShopId() > 0) {
+                shopCustomerMapper.insertOrUpdatePurchaseTime(order.getShopId(), userId);
             }
         }
     }

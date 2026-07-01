@@ -39,4 +39,7 @@ public interface UserService {
 
     /** 账户充值：给用户余额增加 amount，返回充值后余额 */
     java.math.BigDecimal recharge(Long userId, java.math.BigDecimal amount);
+
+    /** 商家查询本店客户列表（MERCHANT） */
+    PageResult<UserManageVO> customerList(int current, int size, String username);
 }

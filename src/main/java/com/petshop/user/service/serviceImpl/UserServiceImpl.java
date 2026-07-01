@@ -18,6 +18,7 @@ import com.petshop.user.model.vo.LoginVO;
 import com.petshop.user.model.vo.UserManageVO;
 import com.petshop.user.model.vo.UserVO;
 import com.petshop.user.service.UserService;
+import com.petshop.security.OwnershipChecker;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -25,10 +26,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -39,6 +37,9 @@ public class UserServiceImpl implements UserService {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private OwnershipChecker ownershipChecker;
 
     @Autowired
     private JwtUtil jwtUtil;
@@ -189,6 +190,41 @@ public class UserServiceImpl implements UserService {
         pr.setPages(result.getPages());
         pr.setCurrent(result.getCurrent());
         pr.setSize(result.getSize());
+        pr.setRecords(records);
+        return pr;
+    }
+
+    @Override
+    public PageResult<UserManageVO> customerList(int current, int size, String username) {
+        List<Long> shopIds = ownershipChecker.myShopIds();
+        PageResult<UserManageVO> pr = new PageResult<>();
+        pr.setTotal(0);
+        pr.setPages(0);
+        pr.setCurrent(current);
+        pr.setSize(size);
+        pr.setRecords(new ArrayList<>());
+        if (shopIds == null || shopIds.isEmpty()) {
+            return pr;
+        }
+
+        QueryWrapper<User> qw = new QueryWrapper<>();
+        qw.eq("deleted", 0);
+        if (username != null && !username.trim().isEmpty()) {
+            qw.like("username", username.trim());
+        }
+        // Use subquery to find users who are customers of the merchant's shops
+        qw.inSql("id", "SELECT user_id FROM shop_customer WHERE shop_id IN (" + shopIds.stream().map(String::valueOf).collect(Collectors.joining(",")) + ")");
+        qw.orderByDesc("create_time");
+
+        Page<User> page = new Page<>(current, size);
+        IPage<User> result = userMapper.selectPage(page, qw);
+
+        List<UserManageVO> records = result.getRecords().stream()
+                .map(this::toManageVO)
+                .collect(Collectors.toList());
+
+        pr.setTotal(result.getTotal());
+        pr.setPages(result.getPages());
         pr.setRecords(records);
         return pr;
     }

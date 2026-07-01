@@ -738,3 +738,26 @@ CREATE TABLE `video` (
 -- Dump completed on 2026-07-01 10:46:17
 
 SET FOREIGN_KEY_CHECKS = 1;
+
+ - -   - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+ - -   T a b l e   s t r u c t u r e   f o r   s h o p _ c u s t o m e r 
+ - -   - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+ D R O P   T A B L E   I F   E X I S T S   \ s h o p _ c u s t o m e r \ ; 
+ C R E A T E   T A B L E   \ s h o p _ c u s t o m e r \   ( 
+     \ i d \   b i g i n t ( 2 0 )   N O T   N U L L   A U T O _ I N C R E M E N T , 
+     \ s h o p _ i d \   b i g i n t ( 2 0 )   N O T   N U L L   C O M M E N T   ' ó^˙îI D ' , 
+     \ u s e r _ i d \   b i g i n t ( 2 0 )   N O T   N U L L   C O M M E N T   ' -çpN(u7bI D ' , 
+     \ l a s t _ p u r c h a s e _ t i m e \   d a t e t i m e   D E F A U L T   C U R R E N T _ T I M E S T A M P   C O M M E N T   '  g—è-çpNˆeÙï' , 
+     \ c r e a t e _ t i m e \   d a t e t i m e   D E F A U L T   C U R R E N T _ T I M E S T A M P , 
+     \ u p d a t e _ t i m e \   d a t e t i m e   D E F A U L T   C U R R E N T _ T I M E S T A M P   O N   U P D A T E   C U R R E N T _ T I M E S T A M P , 
+     \ d e l e t e d \   t i n y i n t ( 1 )   D E F A U L T   0 , 
+     P R I M A R Y   K E Y   ( \ i d \ ) , 
+     U N I Q U E   K E Y   \ u k _ s h o p _ u s e r \   ( \ s h o p _ i d \ , \ u s e r _ i d \ ) 
+ )   E N G I N E = I n n o D B   D E F A U L T   C H A R S E T = u t f 8 m b 4   C O M M E N T = ' ó^˙î¢[7bsQ˚|hà' ; 
+  
+ 
+ - -   eàEQ  o r d e r s   hà:\ÑvW[µk
+ A L T E R   T A B L E   o r d e r s   A D D   C O L U M N   I F   N O T   E X I S T S   c o u r i e r _ c o m p a n y   V A R C H A R ( 2 5 5 )   D E F A U L T   N U L L   C O M M E N T   ' irAmlQ¯S' ; 
+ A L T E R   T A B L E   o r d e r s   A D D   C O L U M N   I F   N O T   E X I S T S   t r a c k i n g _ n u m b e r   V A R C H A R ( 2 5 5 )   D E F A U L T   N U L L   C O M M E N T   ' irAmUS˜S' ; 
+  
+ 

@@ -103,6 +103,17 @@ public class UserController {
         return Result.success(result);
     }
 
+    @ApiOperation("商家查询本店客户列表")
+    @RequireRole({"MERCHANT"})
+    @GetMapping("/customers")
+    public Result<PageResult<UserManageVO>> customerList(
+            @RequestParam(defaultValue = "1") int current,
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String username) {
+        PageResult<UserManageVO> result = userService.customerList(current, size, username);
+        return Result.success(result);
+    }
+
     @ApiOperation("后台启用/禁用用户")
     @RequireRole({"ADMIN"})
     @PutMapping("/{id}/status")

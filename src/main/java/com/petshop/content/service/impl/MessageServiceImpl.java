@@ -13,6 +13,9 @@ import com.petshop.content.mapper.UserMessageMapper;
 import com.petshop.content.service.MessageService;
 import com.petshop.content.vo.MessageVO;
 import com.petshop.security.UserContext;
+import com.petshop.security.OwnershipChecker;
+import com.petshop.shop.entity.ShopCustomer;
+import com.petshop.shop.mapper.ShopCustomerMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,16 +23,58 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> implements MessageService {
 
     @Autowired
     private UserMessageMapper userMessageMapper;
+    @Autowired
+    private OwnershipChecker ownershipChecker;
+    @Autowired
+    private ShopCustomerMapper shopCustomerMapper;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void sendMessage(MessageSendDTO dto) {
+        if ("MERCHANT".equals(UserContext.getRole())) {
+            if (dto.getType() == 1) {
+                throw new BusinessException(403, "商家无法发送系统通知");
+            }
+            List<Long> shopIds = ownershipChecker.myShopIds();
+            if (shopIds == null || shopIds.isEmpty()) {
+                throw new BusinessException(403, "您尚未绑定任何店铺，无法发送消息");
+            }
+            LambdaQueryWrapper<ShopCustomer> qw = new LambdaQueryWrapper<>();
+            qw.in(ShopCustomer::getShopId, shopIds);
+            qw.select(ShopCustomer::getUserId);
+            List<Long> customerIds = shopCustomerMapper.selectObjs(qw).stream()
+                    .map(o -> Long.valueOf(o.toString()))
+                    .distinct()
+                    .collect(Collectors.toList());
+
+            if (dto.getScope() == 1) {
+                // 商家广播：转为定向发送给所有本店客户
+                if (customerIds.isEmpty()) {
+                    throw new BusinessException(400, "您的店铺暂无历史购买客户，无法广播");
+                }
+                dto.setScope(2);
+                dto.setTargetUserIds(customerIds);
+            } else if (dto.getScope() == 2) {
+                // 商家定向发送：必须是本店客户
+                List<Long> targets = dto.getTargetUserIds();
+                if (targets == null || targets.isEmpty()) {
+                    throw new BusinessException(400, "定向发送必须指定目标用户列表");
+                }
+                for (Long t : targets) {
+                    if (!customerIds.contains(t)) {
+                        throw new BusinessException(403, "只能向购买过您本店商品的用户发送消息");
+                    }
+                }
+            }
+        }
+        
         Message message = new Message();
         message.setTitle(dto.getTitle());
         message.setContent(dto.getContent());

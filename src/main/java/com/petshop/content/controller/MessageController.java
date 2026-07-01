@@ -26,16 +26,16 @@ public class MessageController {
     @Autowired
     private MessageService messageService;
 
-    @ApiOperation("后台发送/推送消息（仅 ADMIN）")
-    @RequireRole({"ADMIN"})
+    @ApiOperation("后台发送/推送消息（仅 ADMIN 和 MERCHANT）")
+    @RequireRole({"ADMIN", "MERCHANT"})
     @PostMapping
     public Result<Void> sendMessage(@Validated @RequestBody MessageSendDTO dto) {
         messageService.sendMessage(dto);
         return Result.success();
     }
 
-    @ApiOperation("获取后台历史消息分页（仅 ADMIN）")
-    @RequireRole({"ADMIN"})
+    @ApiOperation("获取后台历史消息分页（仅 ADMIN 和 MERCHANT）")
+    @RequireRole({"ADMIN", "MERCHANT"})
     @GetMapping("/manage")
     public Result<PageResult<Message>> pageManageMessages(
             @ApiParam("页码") @RequestParam(defaultValue = "1") long current,
