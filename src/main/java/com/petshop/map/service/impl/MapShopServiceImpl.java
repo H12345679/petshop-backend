@@ -45,13 +45,29 @@ public class MapShopServiceImpl implements MapShopService {
                 .between(MapShop::getLongitude, box.minLongitude, box.maxLongitude)
                 .between(MapShop::getLatitude, box.minLatitude, box.maxLatitude);
 
-        return mapShopMapper.selectList(wrapper).stream()
+        List<MapShopResponse> list = mapShopMapper.selectList(wrapper).stream()
                 .map(shop -> toResponse(shop, longitude, latitude))
                 .filter(Objects::nonNull)
                 .filter(shop -> shop.getDistanceKm().doubleValue() <= radius)
                 .sorted(Comparator.comparing(MapShopResponse::getDistanceKm))
                 .limit(limit)
                 .collect(Collectors.toList());
+
+        // Fallback: 如果指定半径内没有找到任何门店，则返回全局最近的门店，避免页面空白，引导用户了解门店分布
+        if (list.isEmpty()) {
+            LambdaQueryWrapper<MapShop> fallbackWrapper = new LambdaQueryWrapper<>();
+            fallbackWrapper.eq(MapShop::getStatus, 1)
+                    .isNotNull(MapShop::getLongitude)
+                    .isNotNull(MapShop::getLatitude);
+            list = mapShopMapper.selectList(fallbackWrapper).stream()
+                    .map(shop -> toResponse(shop, longitude, latitude))
+                    .filter(Objects::nonNull)
+                    .sorted(Comparator.comparing(MapShopResponse::getDistanceKm))
+                    .limit(limit)
+                    .collect(Collectors.toList());
+        }
+
+        return list;
     }
 
     @Override

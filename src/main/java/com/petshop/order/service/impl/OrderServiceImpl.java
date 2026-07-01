@@ -412,7 +412,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         // MERCHANT 只看自家店
         List<Long> myShopIds = ownershipChecker.myShopIds();
         if (myShopIds != null) {
-            wrapper.in(Order::getShopId, myShopIds);
+            if (myShopIds.isEmpty()) {
+                wrapper.eq(Order::getId, -1L);
+            } else {
+                wrapper.in(Order::getShopId, myShopIds);
+            }
         } else if (shopId != null) {
             wrapper.eq(Order::getShopId, shopId);
         }
