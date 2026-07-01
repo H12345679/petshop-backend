@@ -77,8 +77,6 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Autowired
     private ShopMapper shopMapper;
     @Autowired
-    private CartItemMapper cartItemMapper;
-    @Autowired
     private RedisUtil redisUtil;
     @Autowired
     private OwnershipChecker ownershipChecker;
