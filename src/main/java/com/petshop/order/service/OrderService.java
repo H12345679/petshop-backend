@@ -23,6 +23,9 @@ public interface OrderService {
     /** 模拟支付（余额扣款 + SELECT FOR UPDATE 防重）。仅状态 0→1。 */
     void pay(Long orderId, Integer payType);
 
+    /** 批量支付（合并支付多个订单，一次性扣除总金额）。仅状态 0→1。 */
+    void batchPay(List<Long> orderIds, Integer payType);
+
     /** 取消订单（仅 0/1→-1，恢复库存/优惠券/余额）。 */
     void cancel(Long orderId, String reason);
 
@@ -41,4 +44,7 @@ public interface OrderService {
     /** 后台订单管理分页（ADMIN·MERCHANT）。 */
     PageResult<Map<String, Object>> manageOrders(int current, int size, Long shopId,
                                                   String orderNo, Integer status);
+
+    /** 删除订单（仅已取消/已完成/已退款等终态订单可删，物理删除 order_items 后逻辑删 order）。 */
+    void deleteOrder(Long orderId);
 }
