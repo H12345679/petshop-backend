@@ -30,6 +30,8 @@ CREATE TABLE `address`  (
   `city` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL COMMENT '市',
   `district` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL COMMENT '区/县',
   `detail` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL COMMENT '详细地址',
+  `longitude` decimal(10, 6) NULL DEFAULT NULL COMMENT '经度',
+  `latitude` decimal(10, 6) NULL DEFAULT NULL COMMENT '纬度',
   `is_default` tinyint NOT NULL DEFAULT 0 COMMENT '1默认 0非默认',
   `create_time` datetime NULL DEFAULT NULL,
   `update_time` datetime NULL DEFAULT NULL,
