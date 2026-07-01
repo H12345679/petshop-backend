@@ -132,6 +132,12 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
             User user = userMapper.selectById(order.getUserId());
             if (user != null) {
                 user.setBalance(user.getBalance().add(refundAmount));
+                // 退款前已收货(3)：扣回收货时赠送的积分，防止"收货→退款"反复刷积分
+                if (order.getPrevStatus() != null && order.getPrevStatus() == 3) {
+                    int pts = order.getPayAmount() != null ? order.getPayAmount().intValue() : 0;
+                    int cur = user.getPoints() != null ? user.getPoints() : 0;
+                    user.setPoints(Math.max(0, cur - pts));
+                }
                 userMapper.updateById(user);
             }
 
@@ -204,10 +210,13 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         refund.setAuditRemark(reason);
         this.save(refund);
 
-        // 退回余额
+        // 退回余额；直接退款仅从已收货(3)发起，收货赠送的积分一并扣回
         User user = userMapper.selectById(order.getUserId());
         if (user != null) {
             user.setBalance(user.getBalance().add(order.getPayAmount()));
+            int pts = order.getPayAmount() != null ? order.getPayAmount().intValue() : 0;
+            int cur = user.getPoints() != null ? user.getPoints() : 0;
+            user.setPoints(Math.max(0, cur - pts));
             userMapper.updateById(user);
         }
 

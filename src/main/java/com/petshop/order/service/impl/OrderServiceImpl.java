@@ -12,7 +12,6 @@ import com.petshop.common.PageResult;
 import com.petshop.common.ResultCode;
 import com.petshop.order.entity.*;
 import com.petshop.order.mapper.*;
-import com.petshop.order.service.CartService;
 import com.petshop.order.service.OrderService;
 import com.petshop.product.entity.Product;
 import com.petshop.product.entity.ProductSku;
@@ -142,7 +141,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             if (coupon != null && coupon.getStatus() == 1
                     && !LocalDateTime.now().isBefore(coupon.getStartTime())
                     && !LocalDateTime.now().isAfter(coupon.getEndTime())) {
-                if (amountAfterMember.compareTo(coupon.getThreshold()) >= 0) {
+                // 门槛按商品原价总额判定（与前端 couponUsable 及"满X元"惯例一致），折扣仍按会员折后价计算
+                if (totalAmount.compareTo(coupon.getThreshold()) >= 0) {
                     if (coupon.getType() == 1) {
                         // 满减
                         couponDiscount = coupon.getAmount();
@@ -261,7 +261,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                     || LocalDateTime.now().isAfter(coupon.getEndTime())) {
                 throw new BusinessException("优惠券不在有效期");
             }
-            if (amountAfterMember.compareTo(coupon.getThreshold()) < 0) {
+            // 门槛按商品原价总额判定（与前端及"满X元"惯例一致），折扣仍按会员折后价计算
+            if (totalOrderAmount.compareTo(coupon.getThreshold()) < 0) {
                 throw new BusinessException("未达到优惠券门槛（满 " + coupon.getThreshold() + " 可用）");
             }
             if (coupon.getType() == 1) {
@@ -852,15 +853,23 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 
-    /** 回滚优惠券：将该订单占用的 user_coupon 重置为未使用 */
+    /**
+     * 回滚优惠券：仅当该券关联的其它订单都已终结（已取消/已退款）时才释放。
+     * 跨店拆单时同一张券会挂在多个子订单上，取消其中一单不能放飞整张券。
+     */
     private void rollbackCoupon(Order order) {
-        if (order.getCouponId() != null && order.getCouponId() > 0) {
-            userCouponMapper.update(null, new LambdaUpdateWrapper<UserCoupon>()
-                    .eq(UserCoupon::getId, order.getCouponId())
-                    .set(UserCoupon::getStatus, 0)
-                    .set(UserCoupon::getUsedTime, null)
-                    .set(UserCoupon::getOrderId, null));
-        }
+        if (order.getCouponId() == null || order.getCouponId() <= 0) return;
+        // 当前单此时已被置为终态；统计该券是否还被别的未终结订单占用
+        long stillInUse = this.count(new LambdaQueryWrapper<Order>()
+                .eq(Order::getCouponId, order.getCouponId())
+                .ne(Order::getId, order.getId())
+                .notIn(Order::getStatus, -1, -3, -4));
+        if (stillInUse > 0) return;
+        userCouponMapper.update(null, new LambdaUpdateWrapper<UserCoupon>()
+                .eq(UserCoupon::getId, order.getCouponId())
+                .set(UserCoupon::getStatus, 0)
+                .set(UserCoupon::getUsedTime, null)
+                .set(UserCoupon::getOrderId, null));
     }
 
     // ---------- 内部 DTO ----------
