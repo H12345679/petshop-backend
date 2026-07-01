@@ -1,5 +1,6 @@
 package com.petshop.user.controller;
 
+import com.petshop.common.BusinessException;
 import com.petshop.common.PageResult;
 import com.petshop.common.Result;
 import com.petshop.security.RequireLogin;
@@ -17,6 +18,7 @@ import io.swagger.annotations.ApiOperation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -24,6 +26,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.validation.Valid;
+import java.math.BigDecimal;
+import java.util.Map;
 
 /**
  * 用户接口：查看/修改个人信息（需登录）。
@@ -61,6 +65,31 @@ public class UserController {
         Long userId = UserContext.getUserId();
         userService.changePassword(userId, dto);
         return Result.success();
+    }
+
+    @ApiOperation("账户充值（余额充值）")
+    @RequireLogin
+    @PostMapping("/recharge")
+    public Result<Map<String, Object>> recharge(@RequestBody Map<String, Object> body) {
+        Long userId = UserContext.getUserId();
+        Object amountObj = body.get("amount");
+        if (amountObj == null) {
+            throw new BusinessException("请输入充值金额");
+        }
+        BigDecimal amount;
+        try {
+            amount = new BigDecimal(amountObj.toString());
+        } catch (NumberFormatException e) {
+            throw new BusinessException("金额格式不正确");
+        }
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("充值金额必须大于 0");
+        }
+        if (amount.compareTo(new BigDecimal("999999")) > 0) {
+            throw new BusinessException("单次充值金额不能超过 999,999");
+        }
+        BigDecimal newBalance = userService.recharge(userId, amount);
+        return Result.success(Map.of("balance", newBalance));
     }
 
     @ApiOperation("后台用户管理列表")

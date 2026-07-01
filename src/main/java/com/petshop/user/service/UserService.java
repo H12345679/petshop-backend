@@ -36,4 +36,7 @@ public interface UserService {
 
     /** 后台授予/变更用户角色（ADMIN） */
     void updateUserRole(Long userId, UserRoleDTO dto);
+
+    /** 账户充值：给用户余额增加 amount，返回充值后余额 */
+    java.math.BigDecimal recharge(Long userId, java.math.BigDecimal amount);
 }

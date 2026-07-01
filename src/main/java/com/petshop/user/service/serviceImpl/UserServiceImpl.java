@@ -156,6 +156,19 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    public BigDecimal recharge(Long userId, BigDecimal amount) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BusinessException("用户不存在");
+        }
+        BigDecimal current = user.getBalance() != null ? user.getBalance() : BigDecimal.ZERO;
+        BigDecimal newBalance = current.add(amount);
+        user.setBalance(newBalance);
+        userMapper.updateById(user);
+        return newBalance;
+    }
+
+    @Override
     public PageResult<UserManageVO> manageList(int current, int size, String username) {
         QueryWrapper<User> qw = new QueryWrapper<>();
         qw.eq("deleted", 0);
