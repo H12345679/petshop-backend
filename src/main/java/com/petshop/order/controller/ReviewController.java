@@ -52,15 +52,24 @@ public class ReviewController {
             @RequestParam(defaultValue = "10") Integer size,
             @RequestParam(required = false) Long productId,
             @RequestParam(required = false) Integer rating,
-            @RequestParam(required = false) Integer hasReply) {
-        return Result.success(reviewService.managePage(current, size, productId, rating, hasReply));
+            @RequestParam(required = false) Integer hasReply,
+            @RequestParam(required = false) Integer showDeleted) {
+        return Result.success(reviewService.managePage(current, size, productId, rating, hasReply, showDeleted));
     }
 
-    @ApiOperation("删除违规评价（仅 ADMIN）")
+    @ApiOperation("删除违规评价（仅 ADMIN，逻辑删除）")
     @RequireRole("ADMIN")
     @DeleteMapping("/reviews/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         reviewService.deleteReview(id);
+        return Result.success();
+    }
+
+    @ApiOperation("恢复已删除评价（仅 ADMIN）")
+    @RequireRole("ADMIN")
+    @PutMapping("/reviews/{id}/restore")
+    public Result<Void> restore(@PathVariable Long id) {
+        reviewService.restoreReview(id);
         return Result.success();
     }
 

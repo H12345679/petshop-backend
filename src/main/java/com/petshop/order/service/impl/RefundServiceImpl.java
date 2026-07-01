@@ -219,7 +219,22 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
     }
 
     @Override
-    public PageResult<Refund> managePage(int current, int size, Long shopId, Integer status) {
+    @Transactional
+    public void directRefundByOrderIdOrNo(Long orderId, String orderNo, String reason) {
+        if (orderId == null && orderNo != null) {
+            // 根据 orderNo 查 orderId
+            LambdaQueryWrapper<Order> wrapper = new LambdaQueryWrapper<>();
+            wrapper.eq(Order::getOrderNo, orderNo);
+            Order order = orderMapper.selectOne(wrapper);
+            if (order == null) throw new BusinessException(ResultCode.NOT_FOUND);
+            orderId = order.getId();
+        }
+        if (orderId == null) throw new BusinessException(400, "请提供订单号");
+        this.directRefund(orderId, reason);
+    }
+
+    @Override
+    public PageResult<Map<String, Object>> managePage(int current, int size, Long shopId, Integer status) {
         LambdaQueryWrapper<Refund> wrapper = new LambdaQueryWrapper<>();
         if (status != null) {
             wrapper.eq(Refund::getStatus, status);
@@ -227,25 +242,62 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         wrapper.orderByDesc(Refund::getCreateTime);
         Page<Refund> page = this.page(new Page<>(current, size), wrapper);
 
-        // MERCHANT 按店铺过滤
         List<Long> shopIds = ownershipChecker.myShopIds();
-        if (shopIds != null) {
-            List<Refund> filtered = new ArrayList<>();
-            for (Refund r : page.getRecords()) {
-                Order order = orderMapper.selectById(r.getOrderId());
-                if (order != null && shopIds.contains(order.getShopId())) {
-                    filtered.add(r);
+        List<Map<String, Object>> records = new ArrayList<>();
+        long total = page.getTotal();
+
+        for (Refund r : page.getRecords()) {
+            // 查关联订单
+            Order order = orderMapper.selectById(r.getOrderId());
+            if (order == null) continue;
+            // MERCHANT 按店铺过滤
+            if (shopIds != null && !shopIds.contains(order.getShopId())) continue;
+
+            Map<String, Object> vo = new LinkedHashMap<>();
+            vo.put("id", r.getId());
+            vo.put("refundNo", r.getRefundNo());
+            vo.put("orderId", r.getOrderId());
+            vo.put("orderNo", order.getOrderNo());
+            vo.put("userId", r.getUserId());
+            // 买家名
+            User user = userMapper.selectById(r.getUserId());
+            vo.put("buyerName", user != null ? (user.getNickname() != null ? user.getNickname() : user.getUsername()) : "用户#" + r.getUserId());
+            vo.put("amount", r.getAmount());
+            vo.put("reason", r.getReason());
+            vo.put("type", r.getType());
+            vo.put("status", r.getStatus());
+            vo.put("auditRemark", r.getAuditRemark());
+            vo.put("auditTime", r.getAuditTime());
+            vo.put("createTime", r.getCreateTime());
+
+            // 查订单明细，计算可退上限 & 商品名
+            LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
+            oiWrapper.eq(OrderItem::getOrderId, order.getId());
+            List<OrderItem> items = orderItemMapper.selectList(oiWrapper);
+            BigDecimal maxRefund = BigDecimal.ZERO;
+            String productName = "—";
+            if (!items.isEmpty()) {
+                OrderItem firstItem = items.get(0);
+                productName = firstItem.getProductName() != null ? firstItem.getProductName() : "商品";
+                if (items.size() > 1) productName += " 等" + items.size() + "件";
+                for (OrderItem oi : items) {
+                    BigDecimal rpa = oi.getRealPayAmount() != null ? oi.getRealPayAmount() : BigDecimal.ZERO;
+                    maxRefund = maxRefund.add(rpa);
                 }
             }
-            PageResult<Refund> pr = new PageResult<>();
-            pr.setTotal(filtered.size());
-            pr.setPages(1);
-            pr.setCurrent(current);
-            pr.setSize(size);
-            pr.setRecords(filtered);
-            return pr;
+            vo.put("productName", productName);
+            vo.put("maxRefund", maxRefund);
+
+            records.add(vo);
         }
-        return PageResult.of(page);
+
+        PageResult<Map<String, Object>> pr = new PageResult<>();
+        pr.setTotal(shopIds != null ? records.size() : total);
+        pr.setPages(shopIds != null ? 1 : page.getPages());
+        pr.setCurrent(current);
+        pr.setSize(size);
+        pr.setRecords(records);
+        return pr;
     }
 
     // ========== 内部 ==========

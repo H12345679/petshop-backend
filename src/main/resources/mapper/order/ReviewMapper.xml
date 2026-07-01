@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.petshop.order.mapper.ReviewMapper">
+
+    <select id="selectManageWithDeleted" resultType="com.petshop.order.entity.Review">
+        SELECT * FROM review WHERE deleted = 1
+        <if test="shopIds != null and shopIds.size > 0">
+            AND shop_id IN
+            <foreach collection="shopIds" item="sid" open="(" separator="," close=")">#{sid}</foreach>
+        </if>
+        <if test="productId != null">AND product_id = #{productId}</if>
+        <if test="rating != null">AND rating = #{rating}</if>
+        <if test="hasReply == 1">AND reply IS NOT NULL AND reply != ''</if>
+        <if test="hasReply == 0">AND (reply IS NULL OR reply = '')</if>
+        ORDER BY create_time DESC
+    </select>
+
+    <select id="countManageWithDeleted" resultType="long">
+        SELECT COUNT(*) FROM review WHERE deleted = 1
+        <if test="shopIds != null and shopIds.size > 0">
+            AND shop_id IN
+            <foreach collection="shopIds" item="sid" open="(" separator="," close=")">#{sid}</foreach>
+        </if>
+        <if test="productId != null">AND product_id = #{productId}</if>
+        <if test="rating != null">AND rating = #{rating}</if>
+        <if test="hasReply == 1">AND reply IS NOT NULL AND reply != ''</if>
+        <if test="hasReply == 0">AND (reply IS NULL OR reply = '')</if>
+    </select>
+
+</mapper>
