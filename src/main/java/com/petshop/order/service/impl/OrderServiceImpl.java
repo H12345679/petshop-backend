@@ -12,7 +12,6 @@ import com.petshop.common.PageResult;
 import com.petshop.common.ResultCode;
 import com.petshop.order.entity.*;
 import com.petshop.order.mapper.*;
-import com.petshop.order.service.CartService;
 import com.petshop.order.service.OrderService;
 import com.petshop.product.entity.Product;
 import com.petshop.product.entity.ProductSku;
@@ -142,7 +141,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             if (coupon != null && coupon.getStatus() == 1
                     && !LocalDateTime.now().isBefore(coupon.getStartTime())
                     && !LocalDateTime.now().isAfter(coupon.getEndTime())) {
-                if (amountAfterMember.compareTo(coupon.getThreshold()) >= 0) {
+                // 门槛按商品原价总额判定（与前端 couponUsable 及"满X元"惯例一致），折扣仍按会员折后价计算
+                if (totalAmount.compareTo(coupon.getThreshold()) >= 0) {
                     if (coupon.getType() == 1) {
                         // 满减
                         couponDiscount = coupon.getAmount();
@@ -261,7 +261,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                     || LocalDateTime.now().isAfter(coupon.getEndTime())) {
                 throw new BusinessException("优惠券不在有效期");
             }
-            if (amountAfterMember.compareTo(coupon.getThreshold()) < 0) {
+            // 门槛按商品原价总额判定（与前端及"满X元"惯例一致），折扣仍按会员折后价计算
+            if (totalOrderAmount.compareTo(coupon.getThreshold()) < 0) {
                 throw new BusinessException("未达到优惠券门槛（满 " + coupon.getThreshold() + " 可用）");
             }
             if (coupon.getType() == 1) {
@@ -360,15 +361,21 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 oi.setRealPayAmount(lineRealPay);
                 orderItemMapper.insert(oi);
 
-                // 库存扣减
+                // 库存扣减（原子：WHERE stock>=qty，影响行数!=1 说明并发下已被抢空，抛错回滚整单，防超卖）
+                int stockRows;
                 if (line.skuId != null && line.skuId != 0) {
-                    productSkuMapper.update(null, new LambdaUpdateWrapper<ProductSku>()
+                    stockRows = productSkuMapper.update(null, new LambdaUpdateWrapper<ProductSku>()
                             .eq(ProductSku::getId, line.skuId)
+                            .ge(ProductSku::getStock, line.qty)
                             .setSql("stock = stock - " + line.qty));
                 } else {
-                    productMapper.update(null, new LambdaUpdateWrapper<Product>()
+                    stockRows = productMapper.update(null, new LambdaUpdateWrapper<Product>()
                             .eq(Product::getId, line.product.getId())
+                            .ge(Product::getStock, line.qty)
                             .setSql("stock = stock - " + line.qty));
+                }
+                if (stockRows != 1) {
+                    throw new BusinessException(line.product.getName() + " 库存不足，请重试");
                 }
 
                 // 清除购物车中已下单的商品（按 userId + productId + skuId 匹配）
@@ -466,7 +473,6 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     public void pay(Long orderId, Integer payType) {
         Long userId = requireUserId();
 
-        // SELECT ... FOR UPDATE 防重复扣款（通过 MyBatis-Plus 行锁方式）
         Order order = this.baseMapper.selectById(orderId);
         if (order == null) throw new BusinessException(ResultCode.NOT_FOUND);
         if (!userId.equals(order.getUserId())) throw new BusinessException(ResultCode.FORBIDDEN);
@@ -474,24 +480,28 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             throw new BusinessException("订单状态不允许支付（当前：" + statusDesc(order.getStatus()) + "）");
         }
 
-        // 扣余额
-        User user = userMapper.selectById(userId);
-        if (user == null) throw new BusinessException("用户不存在");
-        if (user.getBalance() == null || user.getBalance().compareTo(order.getPayAmount()) < 0) {
+        // CAS 抢占订单：status 0→1，影响行数!=1 说明已被并发支付/取消，防重复扣款
+        int paidRows = this.baseMapper.update(null, new LambdaUpdateWrapper<Order>()
+                .eq(Order::getId, orderId)
+                .eq(Order::getStatus, 0)
+                .set(Order::getStatus, 1)
+                .set(Order::getPayType, payType != null ? payType : 1)
+                .set(Order::getPayTime, LocalDateTime.now()));
+        if (paidRows != 1) {
+            throw new BusinessException("订单状态不允许支付（可能已支付或已取消）");
+        }
+
+        // CAS 扣余额：WHERE balance>=payAmount 原子判断，失败抛错回滚（含上面的订单状态）
+        int balRows = userMapper.update(null, new LambdaUpdateWrapper<User>()
+                .eq(User::getId, userId)
+                .ge(User::getBalance, order.getPayAmount())
+                .setSql("balance = balance - " + order.getPayAmount().toPlainString()));
+        if (balRows != 1) {
             throw new BusinessException("余额不足");
         }
-        user.setBalance(user.getBalance().subtract(order.getPayAmount()));
-        userMapper.updateById(user);
-
-        // 状态流转
-        int from = order.getStatus();
-        order.setStatus(1);
-        order.setPayType(payType != null ? payType : 1);
-        order.setPayTime(LocalDateTime.now());
-        this.updateById(order);
 
         // 状态日志
-        saveStatusLog(order.getId(), from, 1, userId, "USER", "用户支付");
+        saveStatusLog(order.getId(), 0, 1, userId, "USER", "用户支付");
 
         // 记录购买行为埋点 (4购买)
         LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
@@ -533,23 +543,27 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             totalPayAmount = totalPayAmount.add(order.getPayAmount());
         }
 
-        // 2) 扣余额（一次性扣除总金额）
-        User user = userMapper.selectById(userId);
-        if (user == null) throw new BusinessException("用户不存在");
-        if (user.getBalance() == null || user.getBalance().compareTo(totalPayAmount) < 0) {
+        // 2) CAS 扣余额（一次性扣除总金额，WHERE balance>=total 原子判断，失败回滚整批）
+        int balRows = userMapper.update(null, new LambdaUpdateWrapper<User>()
+                .eq(User::getId, userId)
+                .ge(User::getBalance, totalPayAmount)
+                .setSql("balance = balance - " + totalPayAmount.toPlainString()));
+        if (balRows != 1) {
             throw new BusinessException("余额不足");
         }
-        user.setBalance(user.getBalance().subtract(totalPayAmount));
-        userMapper.updateById(user);
 
-        // 3) 批量更新订单状态
+        // 3) 批量 CAS 更新订单状态（任一单已被并发支付/取消则整批回滚）
         for (Order order : orders) {
-            int from = order.getStatus();
-            order.setStatus(1);
-            order.setPayType(payType != null ? payType : 1);
-            order.setPayTime(LocalDateTime.now());
-            this.updateById(order);
-            saveStatusLog(order.getId(), from, 1, userId, "USER", "批量支付");
+            int paidRows = this.baseMapper.update(null, new LambdaUpdateWrapper<Order>()
+                    .eq(Order::getId, order.getId())
+                    .eq(Order::getStatus, 0)
+                    .set(Order::getStatus, 1)
+                    .set(Order::getPayType, payType != null ? payType : 1)
+                    .set(Order::getPayTime, LocalDateTime.now()));
+            if (paidRows != 1) {
+                throw new BusinessException("订单状态不允许支付（id=" + order.getId() + "，可能已支付或已取消）");
+            }
+            saveStatusLog(order.getId(), 0, 1, userId, "USER", "批量支付");
 
             // 记录购买行为埋点
             LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
@@ -852,15 +866,23 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 
-    /** 回滚优惠券：将该订单占用的 user_coupon 重置为未使用 */
+    /**
+     * 回滚优惠券：仅当该券关联的其它订单都已终结（已取消/已退款）时才释放。
+     * 跨店拆单时同一张券会挂在多个子订单上，取消其中一单不能放飞整张券。
+     */
     private void rollbackCoupon(Order order) {
-        if (order.getCouponId() != null && order.getCouponId() > 0) {
-            userCouponMapper.update(null, new LambdaUpdateWrapper<UserCoupon>()
-                    .eq(UserCoupon::getId, order.getCouponId())
-                    .set(UserCoupon::getStatus, 0)
-                    .set(UserCoupon::getUsedTime, null)
-                    .set(UserCoupon::getOrderId, null));
-        }
+        if (order.getCouponId() == null || order.getCouponId() <= 0) return;
+        // 当前单此时已被置为终态；统计该券是否还被别的未终结订单占用
+        long stillInUse = this.count(new LambdaQueryWrapper<Order>()
+                .eq(Order::getCouponId, order.getCouponId())
+                .ne(Order::getId, order.getId())
+                .notIn(Order::getStatus, -1, -3, -4));
+        if (stillInUse > 0) return;
+        userCouponMapper.update(null, new LambdaUpdateWrapper<UserCoupon>()
+                .eq(UserCoupon::getId, order.getCouponId())
+                .set(UserCoupon::getStatus, 0)
+                .set(UserCoupon::getUsedTime, null)
+                .set(UserCoupon::getOrderId, null));
     }
 
     // ---------- 内部 DTO ----------

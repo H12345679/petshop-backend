@@ -144,7 +144,9 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
                 ProductSku sku = productSkuMapper.selectById(item.getSkuId());
                 if (sku != null) {
                     vo.put("specName", sku.getSpecName());
-                    vo.put("price", sku.getPrice() != null ? sku.getPrice().multiply(discount) : null);
+                    // price=原价（与订单/结算口径一致），memberPrice=会员折后价（供购物车展示会员价）
+                    vo.put("price", sku.getPrice());
+                    vo.put("memberPrice", sku.getPrice() != null ? sku.getPrice().multiply(discount) : null);
                     vo.put("stock", sku.getStock());
                     vo.put("skuDeleted", sku.getDeleted());
                     if (sku.getDeleted() != null && sku.getDeleted() == 1) valid = 0;
@@ -155,7 +157,8 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
             } else {
                 if (product != null) {
                     vo.put("specName", "");
-                    vo.put("price", product.getPrice() != null ? product.getPrice().multiply(discount) : null);
+                    vo.put("price", product.getPrice());
+                    vo.put("memberPrice", product.getPrice() != null ? product.getPrice().multiply(discount) : null);
                     vo.put("stock", product.getStock());
                 }
             }
