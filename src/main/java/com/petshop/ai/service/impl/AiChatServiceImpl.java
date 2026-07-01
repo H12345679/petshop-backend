@@ -38,7 +38,7 @@ public class AiChatServiceImpl implements AiChatService {
         org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter = new org.springframework.web.servlet.mvc.method.annotation.SseEmitter(60000L);
 
         QueryWrapper<Product> qw = new QueryWrapper<>();
-        qw.eq("status", 1).orderByDesc("sales").last("LIMIT 20");
+        qw.eq("status", 1).orderByDesc("create_time").last("LIMIT 30");
         List<Product> productList = productMapper.selectList(qw);
         
         StringBuilder contextBuilder = new StringBuilder();

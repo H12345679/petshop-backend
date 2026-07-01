@@ -268,7 +268,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     private List<Product> recommendProducts(int n) {
         Long userId = UserContext.getUserId();
         if (userId == null) {
-            return homeProducts("HOT", n);
+            return homeProducts("NEW", n);
         }
 
         // 1. 从 Redis 取出用户画像中权重最高的 Top 3 标签
@@ -298,10 +298,10 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
             }
         }
 
-        // 4. 如果标签推荐出来的数量不够，用热门商品凑数 (冷启动/新用户)
+        // 4. 如果标签推荐出来的数量不够，用最新商品凑数 (冷启动/新用户)
         if (recommendList.size() < n) {
             int need = n - recommendList.size();
-            List<Product> hots = homeProducts("HOT", n + recommendList.size()); // 多取一点防重复
+            List<Product> hots = homeProducts("NEW", n + recommendList.size()); // 多取一点防重复
             for (Product hot : hots) {
                 boolean exists = false;
                 for (Product r : recommendList) {
