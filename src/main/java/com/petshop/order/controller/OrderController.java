@@ -78,8 +78,14 @@ public class OrderController {
     @RequireLogin
     @PostMapping("/batch-pay")
     public Result<Void> batchPay(@RequestBody Map<String, Object> body) {
-        @SuppressWarnings("unchecked")
-        List<Long> orderIds = (List<Long>) body.get("orderIds");
+        // 订单id为雪花ID，前端以字符串回传，需逐个转 Long（直接强转 List<Long> 会因泛型擦除在遍历时抛 ClassCastException）
+        Object rawIds = body.get("orderIds");
+        List<Long> orderIds = new java.util.ArrayList<>();
+        if (rawIds instanceof List) {
+            for (Object o : (List<?>) rawIds) {
+                if (o != null) orderIds.add(Long.valueOf(o.toString()));
+            }
+        }
         Integer payType = body.get("payType") != null
                 ? Integer.valueOf(body.get("payType").toString()) : 1;
         orderService.batchPay(orderIds, payType);
