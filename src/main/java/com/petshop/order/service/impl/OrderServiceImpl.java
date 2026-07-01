@@ -589,6 +589,14 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 behavior.setProductId(item.getProductId());
                 behavior.setBehaviorType(4);
                 userBehaviorMapper.insert(behavior);
+                // 购买行为同步发 MQ，更新用户实时标签画像；MQ 不可用不应影响支付
+                try {
+                    rabbitTemplate.convertAndSend(RabbitMQConfig.RECOMMEND_EXCHANGE,
+                            RabbitMQConfig.BEHAVIOR_ROUTING_KEY,
+                            new UserBehaviorMessage(userId, item.getProductId(), 4));
+                } catch (Exception ignore) {
+                    // 忽略：埋点发送失败不影响主流程
+                }
             }
 
             // 沉淀店铺客户关系
