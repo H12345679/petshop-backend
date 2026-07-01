@@ -3,7 +3,6 @@ package com.petshop.order.controller;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.petshop.common.Result;
 import com.petshop.order.entity.Coupon;
-import com.petshop.order.entity.UserCoupon;
 import com.petshop.order.service.CouponService;
 import com.petshop.security.RequireLogin;
 import com.petshop.security.RequireRole;
@@ -46,10 +45,10 @@ public class CouponController {
         return Result.success();
     }
 
-    @ApiOperation("我的优惠券列表")
+    @ApiOperation("我的优惠券列表（含券定义明细）")
     @RequireLogin
     @GetMapping("/users/me/coupons")
-    public Result<List<UserCoupon>> myCoupons(@RequestParam(required = false) Integer status) {
+    public Result<List<Map<String, Object>>> myCoupons(@RequestParam(required = false) Integer status) {
         return Result.success(couponService.listMyCoupons(status));
     }
 

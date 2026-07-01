@@ -2,9 +2,9 @@ package com.petshop.order.service;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.petshop.order.entity.Coupon;
-import com.petshop.order.entity.UserCoupon;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 优惠券服务接口（对应《项目接口设计文档》C 模块第 6~9 节）。
@@ -19,8 +19,8 @@ public interface CouponService {
     /** 用户领券 */
     void receive(Long couponId);
 
-    /** 当前登录用户已领的优惠券 */
-    List<UserCoupon> listMyCoupons(Integer status);
+    /** 当前登录用户已领的优惠券（含券定义明细：name/type/amount/threshold/endTime 等） */
+    List<Map<String, Object>> listMyCoupons(Integer status);
 
     // ========== 后台 ==========
 

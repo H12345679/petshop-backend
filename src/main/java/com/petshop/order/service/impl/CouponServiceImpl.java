@@ -17,7 +17,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 优惠券 Service 实现。
@@ -86,7 +89,7 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
     }
 
     @Override
-    public List<UserCoupon> listMyCoupons(Integer status) {
+    public List<Map<String, Object>> listMyCoupons(Integer status) {
         Long userId = requireUserId();
         LambdaQueryWrapper<UserCoupon> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(UserCoupon::getUserId, userId);
@@ -94,7 +97,33 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
             wrapper.eq(UserCoupon::getStatus, status);
         }
         wrapper.orderByDesc(UserCoupon::getCreateTime);
-        return userCouponMapper.selectList(wrapper);
+        List<UserCoupon> list = userCouponMapper.selectList(wrapper);
+
+        // 关联券定义明细返回，避免前端拿不到 name/type/amount/threshold/endTime 而显示 NaN折/空
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (UserCoupon uc : list) {
+            Map<String, Object> vo = new LinkedHashMap<>();
+            vo.put("id", uc.getId());
+            vo.put("couponId", uc.getCouponId());
+            vo.put("status", uc.getStatus());
+            vo.put("usedTime", uc.getUsedTime());
+            vo.put("orderId", uc.getOrderId());
+            vo.put("createTime", uc.getCreateTime());
+
+            Coupon coupon = this.getById(uc.getCouponId());
+            if (coupon != null) {
+                vo.put("name", coupon.getName());
+                vo.put("type", coupon.getType());
+                vo.put("amount", coupon.getAmount());
+                vo.put("threshold", coupon.getThreshold());
+                vo.put("total", coupon.getTotal());
+                vo.put("remain", coupon.getRemain());
+                vo.put("startTime", coupon.getStartTime());
+                vo.put("endTime", coupon.getEndTime());
+            }
+            result.add(vo);
+        }
+        return result;
     }
 
     // ==================== 后台 ====================
