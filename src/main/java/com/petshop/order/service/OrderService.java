@@ -20,7 +20,7 @@ public interface OrderService {
     Map<String, Object> createOrder(String requestId, Long userCouponId, Long addressId,
                                     List<Map<String, Object>> items, String remark);
 
-    /** 模拟支付（余额扣款 + SELECT FOR UPDATE 防重）。仅状态 0→1。 */
+    /** 模拟支付（余额扣款 + 订单状态/余额 CAS 防重复扣款）。仅状态 0→1。 */
     void pay(Long orderId, Integer payType);
 
     /** 批量支付（合并支付多个订单，一次性扣除总金额）。仅状态 0→1。 */
@@ -47,4 +47,11 @@ public interface OrderService {
 
     /** 删除订单（仅已取消/已完成/已退款等终态订单可删，物理删除 order_items 后逻辑删 order）。 */
     void deleteOrder(Long orderId);
+
+    /**
+     * 取消超时未支付订单：把创建时间早于 now-timeoutMinutes 且仍待支付(0)的订单
+     * 自动置为已取消(-1)，并回滚库存与优惠券。由定时任务调用。
+     * @return 本次取消的订单数
+     */
+    int cancelTimeoutOrders(int timeoutMinutes);
 }

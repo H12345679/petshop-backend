@@ -702,6 +702,33 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         this.removeById(orderId);
     }
 
+    @Override
+    @Transactional
+    public int cancelTimeoutOrders(int timeoutMinutes) {
+        LocalDateTime deadline = LocalDateTime.now().minusMinutes(timeoutMinutes);
+        // 待支付(0) 且创建时间早于截止点的订单
+        List<Order> expired = this.list(new LambdaQueryWrapper<Order>()
+                .eq(Order::getStatus, 0)
+                .le(Order::getCreateTime, deadline));
+
+        int cancelled = 0;
+        for (Order order : expired) {
+            // CAS 抢占 status 0→-1，避免与用户支付/手动取消并发
+            int rows = this.baseMapper.update(null, new LambdaUpdateWrapper<Order>()
+                    .eq(Order::getId, order.getId())
+                    .eq(Order::getStatus, 0)
+                    .set(Order::getStatus, -1)
+                    .set(Order::getCancelReason, "超时未支付，系统自动取消"));
+            if (rows != 1) continue; // 已被并发支付/取消，跳过
+            saveStatusLog(order.getId(), 0, -1, null, "SYSTEM", "超时未支付自动取消");
+            // 未支付无需回滚余额；回滚库存 + 优惠券（跨店拆单时仅在无其它未终结订单占用该券时才释放）
+            rollbackStock(order.getId());
+            rollbackCoupon(order);
+            cancelled++;
+        }
+        return cancelled;
+    }
+
     // ==================== 内部工具 ====================
 
     /** 将分页订单结果包装为含 orderItems 的 PageResult */
