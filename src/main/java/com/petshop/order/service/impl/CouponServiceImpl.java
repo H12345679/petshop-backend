@@ -89,8 +89,18 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
     }
 
     @Override
+    @Transactional
     public List<Map<String, Object>> listMyCoupons(Integer status) {
         Long userId = requireUserId();
+
+        // 惰性过期归类：把该用户"未使用(0)但券已过期"的记录置为已过期(2)，
+        // 使"已过期"筛选能查到、且过期券不再错误停留在"未使用"里。
+        userCouponMapper.update(null, new LambdaUpdateWrapper<UserCoupon>()
+                .eq(UserCoupon::getUserId, userId)
+                .eq(UserCoupon::getStatus, 0)
+                .inSql(UserCoupon::getCouponId, "SELECT id FROM coupon WHERE end_time < NOW()")
+                .set(UserCoupon::getStatus, 2));
+
         LambdaQueryWrapper<UserCoupon> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(UserCoupon::getUserId, userId);
         if (status != null) {
