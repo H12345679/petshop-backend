@@ -3,7 +3,7 @@ package com.petshop.shop.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.petshop.common.exception.BusinessException;
+import com.petshop.common.BusinessException;
 import com.petshop.common.PageQuery;
 import com.petshop.common.PageResult;
 import com.petshop.common.ResultCode;
