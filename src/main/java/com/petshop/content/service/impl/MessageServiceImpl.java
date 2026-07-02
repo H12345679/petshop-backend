@@ -16,6 +16,8 @@ import com.petshop.security.UserContext;
 import com.petshop.security.OwnershipChecker;
 import com.petshop.shop.entity.ShopCustomer;
 import com.petshop.shop.mapper.ShopCustomerMapper;
+import com.petshop.shop.entity.Shop;
+import com.petshop.shop.mapper.ShopMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,6 +36,8 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
     private OwnershipChecker ownershipChecker;
     @Autowired
     private ShopCustomerMapper shopCustomerMapper;
+    @Autowired
+    private ShopMapper shopMapper;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -72,6 +76,18 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
                         throw new BusinessException(403, "只能向购买过您本店商品的用户发送消息");
                     }
                 }
+            }
+
+            // 自动追加店铺署名与签名
+            Shop shop = shopMapper.selectById(shopIds.get(0));
+            String shopName = (shop != null && shop.getName() != null && !shop.getName().trim().isEmpty()) ? shop.getName() : "品牌商家";
+            String title = dto.getTitle();
+            if (title != null && !title.startsWith("【")) {
+                dto.setTitle("【" + shopName + "】" + title);
+            }
+            String content = dto.getContent();
+            if (content != null && !content.contains("—— 来自店铺：")) {
+                dto.setContent(content + "\n\n—— 来自店铺：「" + shopName + "」");
             }
         }
         
