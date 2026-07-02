@@ -1,8 +1,8 @@
 package com.petshop.shop.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
-import com.petshop.common.utils.PageQuery;
-import com.petshop.common.utils.PageResult;
+import com.petshop.common.PageQuery;
+import com.petshop.common.PageResult;
 import com.petshop.shop.entity.Shop;
 import com.petshop.shop.entity.ShopFavorite;
 

@@ -1,8 +1,8 @@
 package com.petshop.shop.controller;
 
-import com.petshop.common.utils.PageQuery;
-import com.petshop.common.utils.PageResult;
-import com.petshop.common.utils.Result;
+import com.petshop.common.PageQuery;
+import com.petshop.common.PageResult;
+import com.petshop.common.Result;
 import com.petshop.shop.entity.Shop;
 import com.petshop.shop.service.ShopFavoriteService;
 import org.springframework.beans.factory.annotation.Autowired;
