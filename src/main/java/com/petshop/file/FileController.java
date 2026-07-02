@@ -48,6 +48,12 @@ public class FileController {
     public Result<Map<String, String>> uploadAvatar(@RequestParam("file") MultipartFile file) {
         return Result.success(wrap(qiniuService.upload(file, "avatars")));
     }
+    @ApiOperation("上传评价晒图，返回可访问 URL")
+    @com.petshop.security.RequireLogin
+    @PostMapping("/review")
+    public Result<Map<String, String>> uploadReview(@RequestParam("file") MultipartFile file) {
+        return Result.success(wrap(qiniuService.upload(file, "reviews")));
+    }
 
     /** 统一包成 { "url": "..." } 返回，与前端约定一致。 */
     private Map<String, String> wrap(String url) {

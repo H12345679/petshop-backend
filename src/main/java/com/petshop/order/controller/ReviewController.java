@@ -33,6 +33,15 @@ public class ReviewController {
         return Result.success(reviewService.submitReview(review));
     }
 
+    @ApiOperation("获取当前用户自己的评价")
+    @RequireLogin
+    @GetMapping("/reviews/my")
+    public Result<PageResult<Map<String, Object>>> myReviews(
+            @RequestParam(defaultValue = "1") Integer current,
+            @RequestParam(defaultValue = "10") Integer size) {
+        return Result.success(reviewService.myReviews(current, size));
+    }
+
     // ==================== 商家/管理员 ====================
 
     @ApiOperation("商家回复评价（ADMIN·MERCHANT 本店）")
