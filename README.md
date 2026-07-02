@@ -461,8 +461,24 @@ main (受保护，需 PR)
 | **协同过滤推荐**     | E (陈闯) | 足量浏览/收藏行为数据      | 定时跑批计算推荐结果`recommend_result`   |
 | **数据统计可视化**   | D/E      | 交易数据结构稳定           | ECharts 接入，销量/订单/会员多维报表       |
 | **会员动态价格策略** | B/C      | 基础结算金额计算无误       | 拦截器/策略模式注入`pre-settle` 试算环节 |
-| **首页复杂展示规则** | A (黄舰) | 推荐与营销(优惠券)输出就绪 | 替换原本简单的 HOT/NEW 为智能综合排序      |
+| **首页复杂展示规则** | A (黄舰) | 推荐与营销(优惠券)输出就绪 | 替换原本简单的 HOT/NEW 为智能综合排序     |
+
+---
+
+## 🛠 最新核心代码细节与优化 (Latest Core Code Details)
+
+在近期的开发与代码审计中，我们对系统核心链路进行了深度优化，主要包括：
+
+### 1. 订单超时自动取消与并发控制安全
+* **定时扫表机制**：新增 `OrderTimeoutScheduler`，通过 `@Scheduled(fixedDelay = 60000)` 每分钟扫描一次超时订单。超时阈值可通过 `application.yml` 的 `order.pay-timeout-minutes` 配置（默认 30 分钟）。
+* **CAS 乐观锁防并发**：`OrderServiceImpl.cancel()` 重构了状态更新逻辑。使用 `LambdaUpdateWrapper` 限定 `.eq(Order::getStatus, from)`，防止用户在自动取消的同一毫秒内完成支付或手动取消导致的互相覆盖。
+* **优惠券与库存安全回滚**：修复了 `user_coupon` 的 `order_id` 字段不支持 `null` 的 SQL 约束漏洞，现已正确回滚为 `0L`。跨店拆单时，通过子订单状态聚合校验（`stillInUse`），防止提前释放整单优惠券。
+* **审计日志追踪**：订单状态流转均已接入 `order_status_log` 审计，支持记录操作人与系统自动触发的行为，便于排查客诉。
+
+### 2. 后台管理列表的服务端高级过滤
+* **全量条件动态下推**：重构了 `UserController.manageList` 接口，增加了 `role`、`memberLevelId`、`status` 等筛选项。
+* **MyBatis-Plus 动态 SQL**：在 `UserServiceImpl` 中，抛弃了原本低效的前端本地 `Array.filter`，全面使用 `QueryWrapper` 动态拼接 SQL。解决了分页时因局部过滤导致的数据空白 Bug，保障后台检索的精准性。
 
 <div align="center">
-<b>🐾 PetShop Backend — Built with ❤️ by the Team</b>
+<b>🐾 PetShop Backend · Built with ❤️ by the Team</b>
 </div>
