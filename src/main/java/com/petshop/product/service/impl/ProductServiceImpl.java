@@ -226,6 +226,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
 
         LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
         w.eq(Product::getStatus, 1);   // 首页只展示「上架」商品
+        boolean isCfFallback = false;
         if ("NEW".equalsIgnoreCase(strategy)) {
             w.orderByDesc(Product::getCreateTime);   // 新鲜上架
         } else if ("CF".equalsIgnoreCase(strategy)) {
@@ -241,34 +242,42 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
                     // 确保按 in 的顺序或至少不报错，先简单返回这些数据
                     // Mybatis Plus 的 in 会打乱顺序，如果不介意这里就直接返回
                     List<Product> list = this.list(w);
-                    if (list != null) {
-                        for (Product p : list) {
-                            applyDiscount(p);
-                        }
+                    if (list == null) {
+                        list = new java.util.ArrayList<>();
+                    }
+                    
+                    // Step 4 凑数补齐逻辑：如果离线协同过滤推荐数量不足 n 条，去重后用全站错峰销量榜（第2页）凑满
+                    if (list.size() < n) {
+                        LambdaQueryWrapper<Product> hotW = new LambdaQueryWrapper<>();
+                        hotW.eq(Product::getStatus, 1).orderByDesc(Product::getSales);
+                        List<Product> hots = getPageWithFallbackProtection(hotW, n + list.size(), 2);
+                        fillWithDeduplication(list, n, hots);
+                    }
+                    
+                    for (Product p : list) {
+                        applyDiscount(p);
                     }
                     return list;
                 }
             }
-            // 兜底：未登录或该用户没有跑过 CF 推荐，返回全站销量最高
+            // 兜底：未登录或该用户没有跑过 CF 推荐，错峰取全站销量榜第 2 页，避开第一页的热榜
+            isCfFallback = true;
             w.orderByDesc(Product::getSales);
         } else {
             // HOT / 默认 → 按销量
             w.orderByDesc(Product::getSales);
         }
-        // 取前 N 条：复用分页，要第 1 页、每页 n 条，拿 records（不写裸 LIMIT SQL）
-        List<Product> list = this.page(new Page<>(1, n), w).getRecords();
-        if (list != null) {
-            for (Product p : list) {
-                applyDiscount(p);
-            }
-        }
-        return list;
+        // 取前 N 条：如果是 CF 兜底，错峰取第 2 页避开第一页的热榜；同时应用智能防破窗保护
+        return getPageWithFallbackProtection(w, n, isCfFallback ? 2 : 1);
     }
 
     private List<Product> recommendProducts(int n) {
         Long userId = UserContext.getUserId();
         if (userId == null) {
-            return homeProducts("NEW", n);
+            // 错峰兜底：未登录访客取 NEW（最新上架）的第 2 页，避开首屏第 1 页的上新榜；同时带智能防破窗
+            LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
+            w.eq(Product::getStatus, 1).orderByDesc(Product::getCreateTime);
+            return getPageWithFallbackProtection(w, n, 2);
         }
 
         // 1. 从 Redis 取出用户画像中权重最高的 Top 3 标签
@@ -298,24 +307,12 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
             }
         }
 
-        // 4. 如果标签推荐出来的数量不够，用最新商品凑数 (冷启动/新用户)
+        // 4. 如果标签推荐出来的数量不够，用最新商品错峰凑数 (冷启动/新用户)
         if (recommendList.size() < n) {
-            int need = n - recommendList.size();
-            List<Product> hots = homeProducts("NEW", n + recommendList.size()); // 多取一点防重复
-            for (Product hot : hots) {
-                boolean exists = false;
-                for (Product r : recommendList) {
-                    if (r.getId().equals(hot.getId())) {
-                        exists = true;
-                        break;
-                    }
-                }
-                if (!exists) {
-                    recommendList.add(hot);
-                    need--;
-                    if (need <= 0) break;
-                }
-            }
+            LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
+            w.eq(Product::getStatus, 1).orderByDesc(Product::getCreateTime);
+            List<Product> hots = getPageWithFallbackProtection(w, n + recommendList.size(), 2);
+            fillWithDeduplication(recommendList, n, hots);
         }
 
         if (recommendList != null) {
@@ -324,6 +321,53 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
             }
         }
         return recommendList;
+    }
+
+    /**
+     * 智能错峰分页查询（带防破窗降级保护机制）
+     * @param w 查询条件
+     * @param n 每页数量
+     * @param pageNum 目标页码（错峰用，例如传 2）
+     */
+    private List<Product> getPageWithFallbackProtection(LambdaQueryWrapper<Product> w, int n, int pageNum) {
+        List<Product> list = this.page(new Page<>(pageNum, n), w).getRecords();
+        // 智能防破窗：如果错峰第 N 页（pageNum > 1）数据为空或未拿够，说明数据库商品总数较少，优雅回退到第 1 页
+        if ((list == null || list.isEmpty()) && pageNum > 1) {
+            list = this.page(new Page<>(1, n), w).getRecords();
+        }
+        if (list != null) {
+            for (Product p : list) {
+                applyDiscount(p);
+            }
+        }
+        return list != null ? list : new java.util.ArrayList<>();
+    }
+
+    /**
+     * 推荐结果去重凑数补齐通用方法
+     * @param targetList 当前已有的推荐商品列表（需要补齐的目标集合）
+     * @param targetSize 期望达到的总条数 n
+     * @param fallbackList 用于凑数补齐的备选商品列表（错峰拉取的备用数据）
+     */
+    private void fillWithDeduplication(List<Product> targetList, int targetSize, List<Product> fallbackList) {
+        if (targetList.size() >= targetSize || fallbackList == null || fallbackList.isEmpty()) {
+            return;
+        }
+        int need = targetSize - targetList.size();
+        for (Product candidate : fallbackList) {
+            boolean exists = false;
+            for (Product r : targetList) {
+                if (r.getId().equals(candidate.getId())) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                targetList.add(candidate);
+                need--;
+                if (need <= 0) break;
+            }
+        }
     }
 
     @Override
