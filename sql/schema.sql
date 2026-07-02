@@ -1,9 +1,12 @@
 -- ============================================================
 -- petshop 数据库结构（schema only）
 -- 单一权威建表脚本，与 Java 实体保持一致；配套数据见 data.sql。
--- 用法：mysql -h127.0.0.1 -P3307 -uroot -proot petshop < sql/schema.sql
+-- 用法：mysql -h127.0.0.1 -P3307 -uroot -proot < sql/schema.sql
 -- 注意：含 DROP TABLE IF EXISTS，会重建表结构（清空数据）。
 -- ============================================================
+CREATE DATABASE IF NOT EXISTS `petshop` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+USE `petshop`;
+
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
@@ -277,6 +280,8 @@ CREATE TABLE `orders` (
   `receiver_name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '收货人(快照)',
   `receiver_phone` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '收货电话(快照)',
   `receiver_address` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '收货地址(快照)',
+  `courier_company` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '快递公司',
+  `tracking_number` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '快递单号',
   `remark` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '备注',
   `create_time` datetime DEFAULT NULL,
   `update_time` datetime DEFAULT NULL,
@@ -737,8 +742,6 @@ CREATE TABLE `video` (
 
 -- Dump completed on 2026-07-01 10:46:17
 
-SET FOREIGN_KEY_CHECKS = 1;
-
 -- ----------------------------
 -- Table structure for shop_customer
 -- ----------------------------
@@ -755,6 +758,4 @@ CREATE TABLE `shop_customer` (
   UNIQUE KEY `uk_shop_user` (`shop_id`,`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='商店客户关系表';
 
--- 补充 orders 表缺少的字段
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS `courier_company` VARCHAR(255) DEFAULT NULL COMMENT '快递公司';
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS `tracking_number` VARCHAR(255) DEFAULT NULL COMMENT '快递单号';
+SET FOREIGN_KEY_CHECKS = 1;
