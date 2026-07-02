@@ -130,6 +130,14 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
 
     @Override
     public void createCoupon(Coupon coupon) {
+        if (coupon.getTotal() != null && coupon.getTotal() > 100000) {
+            throw new BusinessException("发行总量最大不能超过 100,000 张");
+        }
+        if (coupon.getType() != null && coupon.getType() == 2) {
+            if (coupon.getAmount() == null || coupon.getAmount().compareTo(new java.math.BigDecimal("0.99")) > 0) {
+                throw new BusinessException("折扣率不能大于 0.99");
+            }
+        }
         coupon.setId(null);
         // remain 初始等于 total
         if (coupon.getRemain() == null) {
@@ -143,6 +151,14 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
 
     @Override
     public void updateCoupon(Long id, Coupon coupon) {
+        if (coupon.getTotal() != null && coupon.getTotal() > 100000) {
+            throw new BusinessException("发行总量最大不能超过 100,000 张");
+        }
+        if (coupon.getType() != null && coupon.getType() == 2) {
+            if (coupon.getAmount() == null || coupon.getAmount().compareTo(new java.math.BigDecimal("0.99")) > 0) {
+                throw new BusinessException("折扣率不能大于 0.99");
+            }
+        }
         Coupon exist = this.getById(id);
         if (exist == null) {
             throw new BusinessException(ResultCode.NOT_FOUND);
