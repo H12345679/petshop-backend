@@ -11,11 +11,22 @@ spring:
       max-active: 50
       max-wait: 60000
       validation-query: SELECT 1
+      test-while-idle: true
+      test-on-borrow: false
+      test-on-return: false
+      time-between-eviction-runs-millis: 60000
+      min-evictable-idle-time-millis: 300000
+      keep-alive: true
   redis:
     host: ${REDIS_HOST:localhost}
     port: ${REDIS_PORT:6379}
     database: 0
     timeout: 5000ms
+    lettuce:
+      pool:
+        max-active: 8
+        max-idle: 8
+        min-idle: 2
 
 # 生产环境建议用环境变量覆盖 secret
 jwt:
