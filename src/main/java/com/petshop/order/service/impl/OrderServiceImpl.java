@@ -628,9 +628,16 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
 
         OrderStatus.checkTransition(from, -1);
+        int rows = this.baseMapper.update(null, new LambdaUpdateWrapper<Order>()
+                .eq(Order::getId, order.getId())
+                .eq(Order::getStatus, from)
+                .set(Order::getStatus, -1)
+                .set(Order::getCancelReason, reason));
+        if (rows != 1) {
+            throw new BusinessException("取消失败，订单状态已被并发修改");
+        }
         order.setStatus(-1);
         order.setCancelReason(reason);
-        this.updateById(order);
         saveStatusLog(order.getId(), from, -1, userId, "USER", reason);
 
         // 回滚库存
@@ -955,7 +962,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 .eq(UserCoupon::getId, order.getCouponId())
                 .set(UserCoupon::getStatus, 0)
                 .set(UserCoupon::getUsedTime, null)
-                .set(UserCoupon::getOrderId, null));
+                .set(UserCoupon::getOrderId, 0L));
     }
 
     // ---------- 内部 DTO ----------
