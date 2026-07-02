@@ -50,8 +50,15 @@ public interface OrderService {
 
     /**
      * 取消超时未支付订单：把创建时间早于 now-timeoutMinutes 且仍待支付(0)的订单
-     * 自动置为已取消(-1)，并回滚库存与优惠券。由定时任务调用。
+     * 自动置为已取消(-1)，并回滚库存与优惠券。由定时任务（兜底）调用。
      * @return 本次取消的订单数
      */
     int cancelTimeoutOrders(int timeoutMinutes);
+
+    /**
+     * 单笔订单：若仍待支付(0)则取消并回滚库存/优惠券。由 MQ 延迟消息（主触发）调用，
+     * 延迟队列已保证到点，故无需再判时间。
+     * @return 是否真正取消
+     */
+    boolean cancelOneIfUnpaid(Long orderId);
 }

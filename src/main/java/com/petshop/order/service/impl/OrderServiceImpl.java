@@ -336,6 +336,14 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             orderIds.add(order.getId());
             orderNos.add(orderNo);
 
+            // 发延迟消息：到期(默认30min)后若仍未支付则自动取消（MQ 主触发；定时扫描兜底）
+            try {
+                rabbitTemplate.convertAndSend(RabbitMQConfig.ORDER_DELAY_EXCHANGE,
+                        RabbitMQConfig.ORDER_DELAY_ROUTING_KEY, String.valueOf(order.getId()));
+            } catch (Exception ignore) {
+                // MQ 不可用不影响下单，超时由定时扫描兜底
+            }
+
             // 状态日志
             OrderStatusLog log = new OrderStatusLog();
             log.setOrderId(order.getId());
@@ -706,27 +714,43 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Transactional
     public int cancelTimeoutOrders(int timeoutMinutes) {
         LocalDateTime deadline = LocalDateTime.now().minusMinutes(timeoutMinutes);
-        // 待支付(0) 且创建时间早于截止点的订单
+        // 待支付(0) 且创建时间早于截止点的订单（MQ 漏网单的兜底扫描）
         List<Order> expired = this.list(new LambdaQueryWrapper<Order>()
                 .eq(Order::getStatus, 0)
                 .le(Order::getCreateTime, deadline));
-
         int cancelled = 0;
         for (Order order : expired) {
-            // CAS 抢占 status 0→-1，避免与用户支付/手动取消并发
-            int rows = this.baseMapper.update(null, new LambdaUpdateWrapper<Order>()
-                    .eq(Order::getId, order.getId())
-                    .eq(Order::getStatus, 0)
-                    .set(Order::getStatus, -1)
-                    .set(Order::getCancelReason, "超时未支付，系统自动取消"));
-            if (rows != 1) continue; // 已被并发支付/取消，跳过
-            saveStatusLog(order.getId(), 0, -1, null, "SYSTEM", "超时未支付自动取消");
-            // 未支付无需回滚余额；回滚库存 + 优惠券（跨店拆单时仅在无其它未终结订单占用该券时才释放）
-            rollbackStock(order.getId());
-            rollbackCoupon(order);
-            cancelled++;
+            if (doTimeoutCancel(order)) cancelled++;
         }
         return cancelled;
+    }
+
+    @Override
+    @Transactional
+    public boolean cancelOneIfUnpaid(Long orderId) {
+        if (orderId == null) return false;
+        Order order = this.getById(orderId);
+        if (order == null) return false;
+        return doTimeoutCancel(order);
+    }
+
+    /**
+     * 超时取消单笔订单：CAS 抢占 status 0→-1（避免与用户支付/手动取消并发），
+     * 成功后回滚库存+优惠券（未支付无需退余额），记 SYSTEM 日志。
+     * 跨店拆单时优惠券释放沿用 rollbackCoupon 的守卫（仅无其它未终结订单占用时才释放）。
+     * @return 是否真正取消（false = 已被并发处理或非待支付）
+     */
+    private boolean doTimeoutCancel(Order order) {
+        int rows = this.baseMapper.update(null, new LambdaUpdateWrapper<Order>()
+                .eq(Order::getId, order.getId())
+                .eq(Order::getStatus, 0)
+                .set(Order::getStatus, -1)
+                .set(Order::getCancelReason, "超时未支付，系统自动取消"));
+        if (rows != 1) return false;
+        saveStatusLog(order.getId(), 0, -1, null, "SYSTEM", "超时未支付自动取消");
+        rollbackStock(order.getId());
+        rollbackCoupon(order);
+        return true;
     }
 
     // ==================== 内部工具 ====================
