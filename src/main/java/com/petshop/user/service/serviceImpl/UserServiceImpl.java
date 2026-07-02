@@ -170,11 +170,20 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public PageResult<UserManageVO> manageList(int current, int size, String username) {
+    public PageResult<UserManageVO> manageList(int current, int size, String username, String role, Long memberLevelId, Integer status) {
         QueryWrapper<User> qw = new QueryWrapper<>();
         qw.eq("deleted", 0);
         if (username != null && !username.trim().isEmpty()) {
             qw.like("username", username.trim());
+        }
+        if (role != null && !role.trim().isEmpty()) {
+            qw.eq("role", role.trim());
+        }
+        if (memberLevelId != null) {
+            qw.eq("member_level_id", memberLevelId);
+        }
+        if (status != null) {
+            qw.eq("status", status);
         }
         qw.orderByDesc("create_time");
 

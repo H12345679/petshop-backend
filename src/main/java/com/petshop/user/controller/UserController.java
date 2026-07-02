@@ -98,8 +98,11 @@ public class UserController {
     public Result<PageResult<UserManageVO>> manageList(
             @RequestParam(defaultValue = "1") int current,
             @RequestParam(defaultValue = "10") int size,
-            @RequestParam(required = false) String username) {
-        PageResult<UserManageVO> result = userService.manageList(current, size, username);
+            @RequestParam(required = false) String username,
+            @RequestParam(required = false) String role,
+            @RequestParam(required = false) Long memberLevelId,
+            @RequestParam(required = false) Integer status) {
+        PageResult<UserManageVO> result = userService.manageList(current, size, username, role, memberLevelId, status);
         return Result.success(result);
     }
 

@@ -29,7 +29,7 @@ public interface UserService {
     void changePassword(Long userId, ChangePasswordDTO dto);
 
     /** 后台用户管理列表（ADMIN） */
-    PageResult<UserManageVO> manageList(int current, int size, String username);
+    PageResult<UserManageVO> manageList(int current, int size, String username, String role, Long memberLevelId, Integer status);
 
     /** 后台启用/禁用用户（ADMIN） */
     void updateUserStatus(Long userId, UserStatusDTO dto);
