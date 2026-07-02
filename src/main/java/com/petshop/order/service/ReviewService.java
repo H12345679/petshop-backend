@@ -13,6 +13,9 @@ public interface ReviewService {
     /** 提交评价（仅状态 3，全部明细评价后订单→4）。 */
     Review submitReview(Review review);
 
+    /** 获取当前用户自己的评价（分页）。 */
+    PageResult<Map<String, Object>> myReviews(int current, int size);
+
     /** 商家回复评价（ADMIN·MERCHANT 本店）。 */
     void reply(Long reviewId, String reply);
 

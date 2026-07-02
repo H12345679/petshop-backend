@@ -108,8 +108,29 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
             log.setRemark("全部商品已评价，订单完成");
             orderStatusLogMapper.insert(log);
         }
-
         return review;
+    }
+
+    @Override
+    public PageResult<Map<String, Object>> myReviews(int current, int size) {
+        Long userId = UserContext.getUserId();
+        if (userId == null) throw new BusinessException(ResultCode.UNAUTHORIZED);
+
+        Page<Review> pageParam = new Page<>(current, size);
+        LambdaQueryWrapper<Review> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Review::getUserId, userId);
+        wrapper.orderByDesc(Review::getCreateTime);
+
+        Page<Review> pageResult = this.page(pageParam, wrapper);
+        List<Map<String, Object>> records = buildRecords(pageResult.getRecords());
+
+        PageResult<Map<String, Object>> pr = new PageResult<>();
+        pr.setTotal(pageResult.getTotal());
+        pr.setPages(pageResult.getPages());
+        pr.setCurrent(pageResult.getCurrent());
+        pr.setSize(pageResult.getSize());
+        pr.setRecords(records);
+        return pr;
     }
 
     @Override
