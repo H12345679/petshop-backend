@@ -47,16 +47,16 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     @Autowired
     private com.petshop.shop.mapper.ShopMapper shopMapper;
 
-    private void applyDiscount(Product product) {
+    private void applyDiscount(Product product, java.math.BigDecimal discount, String levelName) {
         if (product == null) return;
-        java.math.BigDecimal discount = membershipLevelService.getCurrentUserDiscount();
+        if (discount == null) discount = java.math.BigDecimal.ONE;
         if (discount.compareTo(java.math.BigDecimal.ONE) < 0) {
             product.setOriginalPrice(product.getPrice());
             if (product.getPrice() != null) {
                 product.setPrice(product.getPrice().multiply(discount));
             }
             product.setUserDiscount(discount);
-            product.setUserLevelName(membershipLevelService.getCurrentUserLevelName());
+            product.setUserLevelName(levelName);
             if (product.getSkus() != null) {
                 for (ProductSku sku : product.getSkus()) {
                     if (sku.getPrice() != null) {
@@ -119,7 +119,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         List<ProductSku> skus = productSkuMapper.selectList(
                 new QueryWrapper<ProductSku>().eq("product_id", id));
         product.setSkus(skus);
-        applyDiscount(product);
+        applyDiscount(product, membershipLevelService.getCurrentUserDiscount(), membershipLevelService.getCurrentUserLevelName());
         return product;
     }
 
@@ -222,8 +222,10 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
 
         Page<Product> pageInfo = this.page(query.toPage(), w);
         if (pageInfo.getRecords() != null) {
+            java.math.BigDecimal discount = membershipLevelService.getCurrentUserDiscount();
+            String levelName = membershipLevelService.getCurrentUserLevelName();
             for (Product p : pageInfo.getRecords()) {
-                applyDiscount(p);
+                applyDiscount(p, discount, levelName);
             }
         }
         return PageResult.of(pageInfo);
@@ -268,8 +270,10 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
                         fillWithDeduplication(list, n, hots);
                     }
                     
+                    java.math.BigDecimal discount = membershipLevelService.getCurrentUserDiscount();
+                    String levelName = membershipLevelService.getCurrentUserLevelName();
                     for (Product p : list) {
-                        applyDiscount(p);
+                        applyDiscount(p, discount, levelName);
                     }
                     return list;
                 }
@@ -330,8 +334,10 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         }
 
         if (recommendList != null) {
+            java.math.BigDecimal discount = membershipLevelService.getCurrentUserDiscount();
+            String levelName = membershipLevelService.getCurrentUserLevelName();
             for (Product p : recommendList) {
-                applyDiscount(p);
+                applyDiscount(p, discount, levelName);
             }
         }
         return recommendList;
@@ -350,8 +356,10 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
             list = this.page(new Page<>(1, n), w).getRecords();
         }
         if (list != null) {
+            java.math.BigDecimal discount = membershipLevelService.getCurrentUserDiscount();
+            String levelName = membershipLevelService.getCurrentUserLevelName();
             for (Product p : list) {
-                applyDiscount(p);
+                applyDiscount(p, discount, levelName);
             }
         }
         return list != null ? list : new java.util.ArrayList<>();
