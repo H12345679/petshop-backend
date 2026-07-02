@@ -44,6 +44,8 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     @Autowired
     private com.petshop.user.service.MembershipLevelService membershipLevelService;
+    @Autowired
+    private com.petshop.shop.mapper.ShopMapper shopMapper;
 
     private void applyDiscount(Product product) {
         if (product == null) return;
@@ -65,6 +67,18 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
             }
         } else {
             product.setUserDiscount(java.math.BigDecimal.ONE);
+        }
+
+        // 自动补充店铺品牌名称
+        if (product.getShopId() != null) {
+            com.petshop.shop.entity.Shop shop = shopMapper.selectById(product.getShopId());
+            if (shop != null && shop.getName() != null && !shop.getName().trim().isEmpty()) {
+                product.setShopName(shop.getName());
+            } else {
+                product.setShopName("宠物商城自营");
+            }
+        } else {
+            product.setShopName("宠物商城自营");
         }
     }
 

@@ -42,4 +42,8 @@ public class Product extends BaseEntity {
     /** 多规格列表（非数据库字段：创建时接收前端传入、详情时组装返回） */
     @TableField(exist = false)
     private List<ProductSku> skus;
+
+    /** 店铺品牌名称（非数据库字段：返回前后台组装展现） */
+    @TableField(exist = false)
+    private String shopName;
 }
