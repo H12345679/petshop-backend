@@ -21,6 +21,7 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_general_ci
       - --default-authentication-plugin=mysql_native_password
+      - --skip-name-resolve
     volumes:
       - petshop-mysql-data:/var/lib/mysql
       # 首次启动自动执行建表脚本
