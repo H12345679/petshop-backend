@@ -85,6 +85,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     private RedisUtil redisUtil;
     @Autowired
     private OwnershipChecker ownershipChecker;
+    @Autowired
+    private RefundMapper refundMapper;
     /** 直接注入 RedisTemplate 用于 increment 操作 */
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
@@ -805,6 +807,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             oiWrapper.eq(OrderItem::getOrderId, order.getId());
             vo.put("orderItems", orderItemMapper.selectList(oiWrapper));
 
+            attachRefundInfo(vo, order);
             records.add(vo);
         }
 
@@ -849,7 +852,33 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
         oiWrapper.eq(OrderItem::getOrderId, order.getId());
         vo.put("orderItems", orderItemMapper.selectList(oiWrapper));
+        attachRefundInfo(vo, order);
         return vo;
+    }
+
+    /**
+     * 退款中/已退款订单附带最新退单进度，供前端展示
+     * "退款审核中 / 待寄回退货(填单号) / 退货已寄出待商家确认 / 已退款 / 已驳回"。
+     */
+    private void attachRefundInfo(Map<String, Object> vo, Order order) {
+        if (order.getStatus() == null || order.getStatus() > -2) return;
+        Refund refund = refundMapper.selectOne(new LambdaQueryWrapper<Refund>()
+                .eq(Refund::getOrderId, order.getId())
+                .orderByDesc(Refund::getCreateTime)
+                .last("LIMIT 1"));
+        if (refund == null) return;
+        Map<String, Object> rf = new LinkedHashMap<>();
+        rf.put("id", refund.getId());
+        rf.put("refundNo", refund.getRefundNo());
+        rf.put("status", refund.getStatus());
+        rf.put("refundType", refund.getRefundType());
+        rf.put("received", refund.getReceived());
+        rf.put("amount", refund.getAmount());
+        rf.put("reason", refund.getReason());
+        rf.put("auditRemark", refund.getAuditRemark());
+        rf.put("returnCourierCompany", refund.getReturnCourierCompany());
+        rf.put("returnTrackingNumber", refund.getReturnTrackingNumber());
+        vo.put("refund", rf);
     }
 
     /** 生成订单号：ORD + yyyyMMdd + Redis 自增序号 */

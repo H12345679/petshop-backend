@@ -445,11 +445,18 @@ CREATE TABLE `refund` (
   `user_id` bigint NOT NULL COMMENT '用户id',
   `amount` decimal(10,2) NOT NULL DEFAULT '0.00' COMMENT '退款金额',
   `reason` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '退单理由',
+  `description` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '问题描述',
+  `images` varchar(2000) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '凭证图片(JSON数组)',
   `type` tinyint NOT NULL DEFAULT '1' COMMENT '1用户申请 2管理员直接退',
-  `status` tinyint NOT NULL DEFAULT '0' COMMENT '0申请中 1审核通过(已退) 2审核拒绝',
+  `refund_type` tinyint NOT NULL DEFAULT '1' COMMENT '1仅退款 2退货退款',
+  `received` tinyint NOT NULL DEFAULT '1' COMMENT '申请时是否已收到货 0未收到(快递退款) 1已收到',
+  `status` tinyint NOT NULL DEFAULT '0' COMMENT '0申请中 1已退款(结束) 2已驳回 3待用户退货 4待商家确认收货',
   `audit_user_id` bigint DEFAULT NULL COMMENT '审核管理员id',
   `audit_time` datetime DEFAULT NULL COMMENT '审核时间',
   `audit_remark` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '审核备注',
+  `return_courier_company` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '退货物流公司',
+  `return_tracking_number` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '退货物流单号',
+  `return_time` datetime DEFAULT NULL COMMENT '用户寄回时间',
   `create_time` datetime DEFAULT NULL,
   `update_time` datetime DEFAULT NULL,
   `deleted` tinyint NOT NULL DEFAULT '0',
@@ -767,7 +774,7 @@ CREATE TABLE IF NOT EXISTS `shop_favorite` (
   `update_time` datetime DEFAULT NULL,
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE KEY `uk_user_shop` (`user_id`,`shop_id`) USING BTREE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='店铺关注�?;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='店铺关注�?;
 CREATE TABLE IF NOT EXISTS shop_favorite (
   id bigint NOT NULL COMMENT '主键',
   user_id bigint NOT NULL COMMENT '用户id',
@@ -776,4 +783,4 @@ CREATE TABLE IF NOT EXISTS shop_favorite (
   update_time datetime DEFAULT NULL,
   PRIMARY KEY (id) USING BTREE,
   UNIQUE KEY uk_user_shop (user_id,shop_id) USING BTREE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='店铺关注�?;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='店铺关注�?;
