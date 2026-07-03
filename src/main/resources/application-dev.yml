@@ -2,7 +2,7 @@ spring:
   datasource:
     type: com.alibaba.druid.pool.DruidDataSource
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3307/petshop?useUnicode=true&characterEncoding=utf8&serverTimezone=GMT%2B8&useSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://10.22.141.136:3307/petshop?useUnicode=true&characterEncoding=utf8&serverTimezone=GMT%2B8&useSSL=false&allowPublicKeyRetrieval=true
     username: root
     password: root
     druid:
@@ -18,7 +18,7 @@ spring:
       min-evictable-idle-time-millis: 300000
       keep-alive: true
   redis:
-    host: localhost
+    host: 10.22.141.136
     port: 6379
     database: 0
     timeout: 5000ms
@@ -28,13 +28,13 @@ spring:
         max-idle: 8
         min-idle: 2
   rabbitmq:
-    host: localhost
+    host: 10.22.141.136
     port: 5672
     username: guest
     password: guest
     virtual-host: /
   elasticsearch:
-    uris: http://localhost:9200
+    uris: http://10.22.141.136:9200
     connection-timeout: 5s
     socket-timeout: 30s
   mail:
