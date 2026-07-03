@@ -46,6 +46,8 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     private com.petshop.user.service.MembershipLevelService membershipLevelService;
     @Autowired
     private com.petshop.shop.mapper.ShopMapper shopMapper;
+    @Autowired
+    private com.petshop.recommend.service.RecommendRankService recommendRankService;
 
     private void applyDiscount(Product product, java.math.BigDecimal discount, String levelName) {
         if (product == null) return;
@@ -325,44 +327,23 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
             return getPageWithFallbackProtection(w, n, 2);
         }
 
-        // 1. 从 Redis 取出用户画像中权重最高的 Top 3 标签
-        String redisKey = "user_profile:" + userId + ":tags";
-        java.util.Set<String> tagIdsStr = stringRedisTemplate.opsForZSet().reverseRange(redisKey, 0, 2);
-        
+        // 多路召回 + 融合排序（CF + 标签画像 + 宠物档案 + 人群热度，含冲突过滤/近购惩罚/类目打散）
         List<Product> recommendList = new java.util.ArrayList<>();
-        
-        if (tagIdsStr != null && !tagIdsStr.isEmpty()) {
-            List<Long> tagIds = new java.util.ArrayList<>();
-            for (String s : tagIdsStr) {
-                tagIds.add(Long.parseLong(s));
-            }
-            
-            // 2. 根据这几个标签去 product_tag 找对应的 product_id
-            List<Long> productIds = productTagMapper.selectProductIdsByTagIds(tagIds);
-            
-            if (productIds != null && !productIds.isEmpty()) {
-                // 3. 从数据库查出这些商品，必须是上架的 (status=1)
-                LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
-                w.eq(Product::getStatus, 1).in(Product::getId, productIds).orderByDesc(Product::getSales);
-                // 限制最多取 n 条
-                List<Product> records = this.page(new Page<>(1, n), w).getRecords();
-                if (records != null) {
-                    recommendList = new java.util.ArrayList<>(records);
-                }
-            }
+        try {
+            recommendList = recommendRankService.rankForUser(userId, n);
+        } catch (Exception e) {
+            // 排序服务异常不影响首页，走兜底
         }
 
-        // 4. 如果标签推荐出来的数量不够，用最新商品错峰凑数 (冷启动/新用户)
+        // 信号不足（新用户无行为无档案）：用最新商品错峰凑数
         if (recommendList.size() < n) {
             LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
             w.eq(Product::getStatus, 1).orderByDesc(Product::getCreateTime);
-            List<Product> hots = getPageWithFallbackProtection(w, n + recommendList.size(), 2);
-            fillWithDeduplication(recommendList, n, hots);
+            List<Product> news = getPageWithFallbackProtection(w, n + recommendList.size(), 2);
+            fillWithDeduplication(recommendList, n, news);
         }
 
-        if (recommendList != null) {
-            applyDiscountAndShopName(recommendList);
-        }
+        applyDiscountAndShopName(recommendList);
         return recommendList;
     }
 
