@@ -100,8 +100,10 @@ public class RefundController {
             @RequestParam(defaultValue = "1") Integer current,
             @RequestParam(defaultValue = "10") Integer size,
             @RequestParam(required = false) Long shopId,
-            @RequestParam(required = false) Integer status) {
-        return Result.success(refundService.managePage(current, size, shopId, status));
+            @RequestParam(required = false) Integer status,
+            @RequestParam(required = false) String refundNo,
+            @RequestParam(required = false) String username) {
+        return Result.success(refundService.managePage(current, size, shopId, status, refundNo, username));
     }
 
     private Long toLong(Object v) {

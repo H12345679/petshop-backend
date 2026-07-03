@@ -55,6 +55,13 @@ public class FileController {
         return Result.success(wrap(qiniuService.upload(file, "reviews")));
     }
 
+    @ApiOperation("上传退款凭证，返回可访问 URL")
+    @com.petshop.security.RequireLogin
+    @PostMapping("/refund")
+    public Result<Map<String, String>> uploadRefund(@RequestParam("file") MultipartFile file) {
+        return Result.success(wrap(qiniuService.upload(file, "refunds")));
+    }
+
     /** 统一包成 { "url": "..." } 返回，与前端约定一致。 */
     private Map<String, String> wrap(String url) {
         Map<String, String> data = new HashMap<>();

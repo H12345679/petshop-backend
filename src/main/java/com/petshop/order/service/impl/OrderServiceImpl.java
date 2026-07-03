@@ -476,6 +476,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
         if (status != null) {
             wrapper.eq(Order::getStatus, status);
+        } else {
+            // Exclude orders in "Refund Processing" (-2) from the general order management list
+            wrapper.ne(Order::getStatus, -2);
         }
         wrapper.orderByDesc(Order::getCreateTime);
         Page<Order> page = this.page(new Page<>(current, size), wrapper);

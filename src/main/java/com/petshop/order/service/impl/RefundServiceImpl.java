@@ -335,10 +335,29 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
     }
 
     @Override
-    public PageResult<Map<String, Object>> managePage(int current, int size, Long shopId, Integer status) {
+    public PageResult<Map<String, Object>> managePage(int current, int size, Long shopId, Integer status, String refundNo, String username) {
         LambdaQueryWrapper<Refund> wrapper = new LambdaQueryWrapper<>();
         if (status != null) {
             wrapper.eq(Refund::getStatus, status);
+        }
+        if (refundNo != null && !refundNo.isEmpty()) {
+            wrapper.eq(Refund::getRefundNo, refundNo);
+        }
+        if (username != null && !username.isEmpty()) {
+            List<User> users = userMapper.selectList(
+                    new LambdaQueryWrapper<User>()
+                            .like(User::getUsername, username)
+                            .or()
+                            .like(User::getNickname, username));
+            if (users != null && !users.isEmpty()) {
+                List<Long> uids = new ArrayList<>();
+                for (User u : users) {
+                    uids.add(u.getId());
+                }
+                wrapper.in(Refund::getUserId, uids);
+            } else {
+                wrapper.eq(Refund::getId, -1L);
+            }
         }
         wrapper.orderByDesc(Refund::getCreateTime);
         Page<Refund> page = this.page(new Page<>(current, size), wrapper);
