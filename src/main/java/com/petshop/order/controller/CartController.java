@@ -6,6 +6,7 @@ import com.petshop.order.service.CartService;
 import com.petshop.security.RequireLogin;
 import io.swagger.annotations.Api;
 import com.petshop.common.annotation.TrackBehavior;
+import com.petshop.log.annotation.LogOperation;
 import io.swagger.annotations.ApiOperation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -26,6 +27,7 @@ public class CartController {
     private CartService cartService;
 
     @ApiOperation("加入购物车（同款存在则递增数量）")
+    @LogOperation("用户加入购物车(埋点)")
     @TrackBehavior(type = 3, productIdSpEL = "#cartItem.productId")
     @PostMapping
     public Result<Void> add(@RequestBody CartItem cartItem) {
