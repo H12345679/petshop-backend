@@ -881,15 +881,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         vo.put("refund", rf);
     }
 
-    /** 生成订单号：ORD + yyyyMMdd + Redis 自增序号 */
+    /** 生成订单号：ORD + yyyyMMdd + 时间戳后7位 + 3位随机数，避免 Redis 重启导致序号重复 */
     private String nextOrderNo(String datePrefix) {
-        String seqKey = REDIS_ORDER_NO_SEQ + datePrefix;
-        Long seq = redisTemplate.opsForValue().increment(seqKey);
-        if (seq != null && seq == 1) {
-            redisTemplate.expire(seqKey, 24, TimeUnit.HOURS);
-        }
-        long safeSeq = (seq != null ? seq : 1) % 10000;
-        return "ORD" + datePrefix + String.format("%04d", safeSeq);
+        long timestampSuffix = System.currentTimeMillis() % 10000000L;
+        int randomDigits = java.util.concurrent.ThreadLocalRandom.current().nextInt(1000);
+        return "ORD" + datePrefix + String.format("%07d", timestampSuffix) + String.format("%03d", randomDigits);
     }
 
     /** 校验商品存在且在架 */
