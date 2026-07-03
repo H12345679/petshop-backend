@@ -239,6 +239,18 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
             w.orderByAsc(Product::getPrice);
         } else if ("price_desc".equals(query.getSort())) {
             w.orderByDesc(Product::getPrice);
+        } else if ("new".equals(query.getSort())) {
+            w.orderByDesc(Product::getCreateTime);
+        } else if ("recommend".equals(query.getSort())) {
+            // 基于用户画像标签的个性化推荐排序
+            List<Long> recIds = getRecommendProductIds(query.toPage().getSize() * 2);
+            if (!recIds.isEmpty()) {
+                // 推荐的商品排在最前面，其余按销量降序兜底
+                String idsStr = recIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+                w.last("ORDER BY FIELD(id," + idsStr + ") DESC, sales DESC");
+            } else {
+                w.orderByDesc(Product::getSales);
+            }
         } else {
             w.orderByDesc(Product::getCreateTime);
         }
@@ -397,6 +409,49 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
                 if (need <= 0) break;
             }
         }
+    }
+
+    /**
+     * 获取当前用户的推荐商品 ID 列表（用于分页排序）
+     * 复用 Redis 用户画像标签推荐逻辑，仅返回 ID 列表
+     */
+    private List<Long> getRecommendProductIds(long limit) {
+        Long userId = UserContext.getUserId();
+        if (userId == null) return java.util.Collections.emptyList();
+
+        List<Long> result = new java.util.ArrayList<>();
+
+        // 1. 从 Redis 取用户画像 Top 3 标签
+        String redisKey = "user_profile:" + userId + ":tags";
+        java.util.Set<String> tagIdsStr = stringRedisTemplate.opsForZSet().reverseRange(redisKey, 0, 2);
+
+        if (tagIdsStr != null && !tagIdsStr.isEmpty()) {
+            List<Long> tagIds = new java.util.ArrayList<>();
+            for (String s : tagIdsStr) {
+                try { tagIds.add(Long.parseLong(s)); } catch (NumberFormatException ignored) {}
+            }
+            if (!tagIds.isEmpty()) {
+                List<Long> productIds = productTagMapper.selectProductIdsByTagIds(tagIds);
+                if (productIds != null) {
+                    result.addAll(productIds.subList(0, (int) Math.min(productIds.size(), limit)));
+                }
+            }
+        }
+
+        // 2. 从 recommend_result 表补充 CF 推荐
+        if (result.size() < limit) {
+            try {
+                List<Long> cfIds = jdbcTemplate.queryForList(
+                        "SELECT product_id FROM recommend_result WHERE user_id = ? ORDER BY score DESC LIMIT ?",
+                        Long.class, userId, limit - result.size()
+                );
+                for (Long id : cfIds) {
+                    if (!result.contains(id)) result.add(id);
+                }
+            } catch (Exception ignored) {}
+        }
+
+        return result;
     }
 
     @Override
