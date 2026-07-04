@@ -862,14 +862,20 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     /**
      * 退款中/已退款订单附带最新退单进度，供前端展示
      * "退款审核中 / 待寄回退货(填单号) / 退货已寄出待商家确认 / 已退款 / 已驳回"。
+     * 驳回后订单已恢复原状态(2/3/4)，此时仍需带出被驳回的退款单，
+     * 否则用户订单页看不到任何退款过的痕迹。
      */
     private void attachRefundInfo(Map<String, Object> vo, Order order) {
-        if (order.getStatus() == null || order.getStatus() > -2) return;
+        // 待支付(0)/待发货(1)不可能有退款单；已取消(-1)只能从 0/1 取消，同样不可能有
+        if (order.getStatus() == null || order.getStatus() == 0
+                || order.getStatus() == 1 || order.getStatus() == -1) return;
         Refund refund = refundMapper.selectOne(new LambdaQueryWrapper<Refund>()
                 .eq(Refund::getOrderId, order.getId())
                 .orderByDesc(Refund::getCreateTime)
                 .last("LIMIT 1"));
         if (refund == null) return;
+        // 订单不在退款流程中时，只有"已驳回"的退款单需要展示
+        if (order.getStatus() > -2 && (refund.getStatus() == null || refund.getStatus() != 2)) return;
         Map<String, Object> rf = new LinkedHashMap<>();
         rf.put("id", refund.getId());
         rf.put("refundNo", refund.getRefundNo());
@@ -879,6 +885,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         rf.put("amount", refund.getAmount());
         rf.put("reason", refund.getReason());
         rf.put("auditRemark", refund.getAuditRemark());
+        rf.put("auditTime", refund.getAuditTime());
         rf.put("returnCourierCompany", refund.getReturnCourierCompany());
         rf.put("returnTrackingNumber", refund.getReturnTrackingNumber());
         vo.put("refund", rf);

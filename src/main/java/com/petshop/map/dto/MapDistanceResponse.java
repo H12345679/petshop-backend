@@ -25,9 +25,9 @@ public class MapDistanceResponse {
     @ApiModelProperty("直线距离，单位公里")
     private BigDecimal distanceKm;
 
-    @ApiModelProperty("预估驾车时长，单位分钟（按城市道路均速30km/h）")
+    @ApiModelProperty("预估驾车时长,单位分钟(按城市道路均速30km/h)")
     private Integer estimatedMinutes;
 
-    @ApiModelProperty("预估步行时长，单位分钟（按步行速度5km/h）")
+    @ApiModelProperty("预估步行时长,单位分钟(按步行速度5km/h)")
     private Integer walkingMinutes;
 }

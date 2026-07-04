@@ -4,6 +4,7 @@ import com.petshop.common.BusinessException;
 import com.petshop.common.PageResult;
 import com.petshop.common.Result;
 import com.petshop.common.ResultCode;
+import com.petshop.log.annotation.LogOperation;
 import com.petshop.security.RequireRole;
 import com.petshop.shop.entity.Shop;
 import com.petshop.shop.service.ShopPageQuery;
@@ -61,6 +62,7 @@ public class ShopController {
 
     @ApiOperation("修改商店（ADMIN/MERCHANT 本店）")
     @RequireRole({"ADMIN", "MERCHANT"})
+    @LogOperation("修改/审核店铺")
     @PutMapping("/{id}")
     public Result<Void> update(@PathVariable Long id, @RequestBody Shop shop) {
         shopService.updateShop(id, shop);

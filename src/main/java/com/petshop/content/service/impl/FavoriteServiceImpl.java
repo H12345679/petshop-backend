@@ -6,13 +6,10 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.petshop.common.BusinessException;
 import com.petshop.common.PageResult;
 import com.petshop.content.entity.Favorite;
-import com.petshop.content.entity.UserBehavior;
 import com.petshop.content.mapper.FavoriteMapper;
-import com.petshop.content.mapper.UserBehaviorMapper;
 import com.petshop.content.service.FavoriteService;
 import com.petshop.security.UserContext;
 import com.petshop.product.entity.Product;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

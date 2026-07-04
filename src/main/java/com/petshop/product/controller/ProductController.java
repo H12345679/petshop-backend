@@ -2,6 +2,7 @@ package com.petshop.product.controller;
 
 import com.petshop.common.PageResult;
 import com.petshop.common.Result;
+import com.petshop.log.annotation.LogOperation;
 import com.petshop.product.entity.Product;
 import com.petshop.product.service.ProductPageQuery;
 import com.petshop.product.service.ProductService;
@@ -45,6 +46,7 @@ public class ProductController {
 
     @ApiOperation("商品修改（ADMIN/MERCHANT 本店）")
     @RequireRole({"ADMIN", "MERCHANT"})
+    @LogOperation("修改/审核商品")
     @PutMapping("/{id}")
     public Result<Product> updateProduct(@PathVariable Long id, @Valid @RequestBody Product product) {
         product.setId(id);   // 用路径上的 id 作为修改目标，避免改错对象

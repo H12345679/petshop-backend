@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.petshop.content.mapper.UserMessageMapper">
+
+    <!-- 批量更新用户已有记录为已读 -->
+    <update id="updateAllUnreadToRead">
+        UPDATE user_message
+        SET is_read = 1, read_time = NOW()
+        WHERE user_id = #{userId} AND is_read = 0
+    </update>
+
+    <!-- 查找该用户还没有阅读过的广播消息 ID 列表 -->
+    <select id="selectUnreadBroadcastMessageIds" resultType="java.lang.Long">
+        SELECT m.id
+        FROM message m
+        WHERE m.scope = 1
+          AND m.deleted = 0
+          AND NOT EXISTS (
+              SELECT 1 FROM user_message um 
+              WHERE um.message_id = m.id AND um.user_id = #{userId}
+          )
+    </select>
+
+</mapper>

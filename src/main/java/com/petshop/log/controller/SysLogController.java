@@ -18,7 +18,7 @@ public class SysLogController {
     private SysLogService sysLogService;
 
     @GetMapping("/page")
-    public Result getPage(@RequestParam(defaultValue = "1") Integer current,
+    public Result<Page<SysLog>> getPage(@RequestParam(defaultValue = "1") Integer current,
                           @RequestParam(defaultValue = "10") Integer size,
                           @RequestParam(required = false) String username,
                           @RequestParam(required = false) String operation) {

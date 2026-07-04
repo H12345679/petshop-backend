@@ -1,6 +1,7 @@
 package com.petshop.file;
 
 import com.petshop.common.Result;
+import com.petshop.security.RequireLogin;
 import com.petshop.security.RequireRole;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
@@ -32,38 +33,38 @@ public class FileController {
     @RequireRole({"ADMIN", "MERCHANT"})
     @PostMapping("/image")
     public Result<Map<String, String>> uploadImage(@RequestParam("file") MultipartFile file) {
-        return Result.success(wrap(qiniuService.upload(file, "images")));
+        return Result.success(buildUrlResponse(qiniuService.upload(file, "images")));
     }
 
     @ApiOperation("上传视频，返回可访问 URL")
     @RequireRole({"ADMIN", "MERCHANT"})
     @PostMapping("/video")
     public Result<Map<String, String>> uploadVideo(@RequestParam("file") MultipartFile file) {
-        return Result.success(wrap(qiniuService.upload(file, "videos")));
+        return Result.success(buildUrlResponse(qiniuService.upload(file, "videos")));
     }
 
     @ApiOperation("上传用户头像，返回可访问 URL")
-    @com.petshop.security.RequireLogin
+    @RequireLogin
     @PostMapping("/avatar")
     public Result<Map<String, String>> uploadAvatar(@RequestParam("file") MultipartFile file) {
-        return Result.success(wrap(qiniuService.upload(file, "avatars")));
+        return Result.success(buildUrlResponse(qiniuService.upload(file, "avatars")));
     }
     @ApiOperation("上传评价晒图，返回可访问 URL")
-    @com.petshop.security.RequireLogin
+    @RequireLogin
     @PostMapping("/review")
     public Result<Map<String, String>> uploadReview(@RequestParam("file") MultipartFile file) {
-        return Result.success(wrap(qiniuService.upload(file, "reviews")));
+        return Result.success(buildUrlResponse(qiniuService.upload(file, "reviews")));
     }
 
     @ApiOperation("上传退款凭证，返回可访问 URL")
-    @com.petshop.security.RequireLogin
+    @RequireLogin
     @PostMapping("/refund")
     public Result<Map<String, String>> uploadRefund(@RequestParam("file") MultipartFile file) {
-        return Result.success(wrap(qiniuService.upload(file, "refunds")));
+        return Result.success(buildUrlResponse(qiniuService.upload(file, "refunds")));
     }
 
     /** 统一包成 { "url": "..." } 返回，与前端约定一致。 */
-    private Map<String, String> wrap(String url) {
+    private Map<String, String> buildUrlResponse(String url) {
         Map<String, String> data = new HashMap<>();
         data.put("url", url);
         return data;

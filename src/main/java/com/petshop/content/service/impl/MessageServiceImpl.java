@@ -185,27 +185,20 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
             throw new BusinessException(401, "未登录");
         }
 
-        // 找出所有我可见且未读的消息（通过分页逻辑的 SQL 来查找也可以，但这里为了简单复用）
-        // 更高效的方法是用一个自定义 SQL 批量更新，但为了简化直接调用 selectMyMessages 找出所有未读
-        // 为了避免分页，可以用一个大 size，或者写一个专用的 Mapper 方法查未读 ID 列表
-        
-        // 简单实现：由于可能数量有限，直接拉取当前用户所有未读消息（或者用自定义SQL更新）
-        // 这里提供一个稍微直接一点的实现：查询所有可见消息，如果没在 user_message 中且是广播，就插入；如果在且为0，就更新。
-        // 但最安全高效的是让数据库执行，不过由于 JPA/MP 限制，我们手写一层逻辑：
-        
-        // 我们利用现有的 selectMyMessages 获取所有未读
-        Page<MessageVO> page = new Page<>(1, 10000); // 假设未读不会超过10000
-        Page<MessageVO> resultPage = this.baseMapper.selectMyMessages(page, userId);
-        
-        List<MessageVO> unreadList = new ArrayList<>();
-        for (MessageVO vo : resultPage.getRecords()) {
-            if (vo.getIsRead() == 0) {
-                unreadList.add(vo);
+        // 高效实现与自动主键兼顾：
+        // 1. 查询该用户还没有阅读过的广播消息的 ID 列表
+        List<Long> unreadIds = userMessageMapper.selectUnreadBroadcastMessageIds(userId);
+        if (unreadIds != null && !unreadIds.isEmpty()) {
+            for (Long msgId : unreadIds) {
+                UserMessage newUm = new UserMessage();
+                newUm.setMessageId(msgId);
+                newUm.setUserId(userId);
+                newUm.setIsRead(1);
+                newUm.setReadTime(LocalDateTime.now());
+                userMessageMapper.insert(newUm); // 让 MyBatis-Plus 自动为 id 生成 Snowflake ID
             }
         }
-        
-        for (MessageVO vo : unreadList) {
-            readMessage(vo.getId());
-        }
+        // 2. 对于已存在于 user_message 中但状态为未读的消息，批量更新为已读
+        userMessageMapper.updateAllUnreadToRead(userId);
     }
 }

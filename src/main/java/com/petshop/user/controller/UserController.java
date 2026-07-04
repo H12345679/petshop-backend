@@ -3,6 +3,7 @@ package com.petshop.user.controller;
 import com.petshop.common.BusinessException;
 import com.petshop.common.PageResult;
 import com.petshop.common.Result;
+import com.petshop.log.annotation.LogOperation;
 import com.petshop.security.RequireLogin;
 import com.petshop.security.RequireRole;
 import com.petshop.security.UserContext;
@@ -119,6 +120,7 @@ public class UserController {
 
     @ApiOperation("后台启用/禁用用户")
     @RequireRole({"ADMIN"})
+    @LogOperation("审核/修改用户状态")
     @PutMapping("/{id}/status")
     public Result<Void> updateUserStatus(
             @PathVariable Long id,

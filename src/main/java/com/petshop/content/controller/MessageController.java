@@ -16,7 +16,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 /**
- * E 模块 - 消息推送（E4）
+ * E 模块 - 消息推送(E4)
  */
 @Api(tags = "08-E模块-消息推送")
 @RestController
@@ -26,7 +26,7 @@ public class MessageController {
     @Autowired
     private MessageService messageService;
 
-    @ApiOperation("后台发送/推送消息（仅 ADMIN 和 MERCHANT）")
+    @ApiOperation("后台发送/推送消息(仅 ADMIN 和 MERCHANT)")
     @RequireRole({"ADMIN", "MERCHANT"})
     @PostMapping
     public Result<Void> sendMessage(@Validated @RequestBody MessageSendDTO dto) {
@@ -34,7 +34,7 @@ public class MessageController {
         return Result.success();
     }
 
-    @ApiOperation("获取后台历史消息分页（仅 ADMIN 和 MERCHANT）")
+    @ApiOperation("获取后台历史消息分页(仅 ADMIN 和 MERCHANT)")
     @RequireRole({"ADMIN", "MERCHANT"})
     @GetMapping("/manage")
     public Result<PageResult<Message>> pageManageMessages(
@@ -43,7 +43,7 @@ public class MessageController {
         return Result.success(messageService.pageManageMessages(current, size));
     }
 
-    @ApiOperation("获取我的消息列表分页（需登录）")
+    @ApiOperation("获取我的消息列表分页(需登录)")
     @RequireLogin
     @GetMapping("/my")
     public Result<PageResult<MessageVO>> pageMyMessages(

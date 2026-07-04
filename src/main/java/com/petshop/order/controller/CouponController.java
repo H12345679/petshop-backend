@@ -11,15 +11,12 @@ import io.swagger.annotations.ApiOperation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
+import com.petshop.common.PageResult;
 import java.util.List;
 import java.util.Map;
 
 /**
- * 优惠券接口（对应《项目接口设计文档》C 模块第 6~9 节）。
- * <p>
- * 本 Controller 的 @RequestMapping 设为 "/api"，以便同时承载 /api/coupons 和
- * /api/users/me/coupons 两组路径（后者是 C 模块负责但挂在 /api/users 下的接口）。
+ * 优惠券接口
  */
 @Api(tags = "05-优惠券")
 @RestController
@@ -54,7 +51,7 @@ public class CouponController {
 
     // ==================== 后台（ADMIN） ====================
 
-    @ApiOperation("后台新增优惠券（仅 ADMIN）")
+    @ApiOperation("后台新增优惠券（仅 ADMIN)")
     @RequireRole("ADMIN")
     @PostMapping("/coupons")
     public Result<Coupon> create(@RequestBody Coupon coupon) {
@@ -62,7 +59,7 @@ public class CouponController {
         return Result.success(coupon);
     }
 
-    @ApiOperation("后台编辑/上下架优惠券（仅 ADMIN）")
+    @ApiOperation("后台编辑/上下架优惠券（仅 ADMIN)")
     @RequireRole("ADMIN")
     @PutMapping("/coupons/{id}")
     public Result<Void> update(@PathVariable Long id, @RequestBody Coupon coupon) {
@@ -70,7 +67,7 @@ public class CouponController {
         return Result.success();
     }
 
-    @ApiOperation("后台删除优惠券（仅 ADMIN）")
+    @ApiOperation("后台删除优惠券（仅 ADMIN)")
     @RequireRole("ADMIN")
     @DeleteMapping("/coupons/{id}")
     public Result<Void> deleteCoupon(@PathVariable Long id) {
@@ -78,22 +75,16 @@ public class CouponController {
         return Result.success();
     }
 
-    @ApiOperation("后台优惠券分页列表（仅 ADMIN）")
+    @ApiOperation("后台优惠券分页列表（仅 ADMIN)")
     @RequireRole("ADMIN")
     @GetMapping("/coupons/manage")
-    public Result<Map<String, Object>> managePage(
+    public Result<PageResult<Coupon>> managePage(
             @RequestParam(defaultValue = "1") Integer current,
             @RequestParam(defaultValue = "10") Integer size,
             @RequestParam(required = false) String name,
             @RequestParam(required = false) Integer type,
             @RequestParam(required = false) Integer status) {
         Page<Coupon> page = couponService.managePage(current, size, name, type, status);
-        Map<String, Object> result = new HashMap<>();
-        result.put("total", page.getTotal());
-        result.put("pages", page.getPages());
-        result.put("current", page.getCurrent());
-        result.put("size", page.getSize());
-        result.put("records", page.getRecords());
-        return Result.success(result);
+        return Result.success(PageResult.of(page));
     }
 }

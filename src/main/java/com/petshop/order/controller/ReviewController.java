@@ -2,6 +2,7 @@ package com.petshop.order.controller;
 
 import com.petshop.common.PageResult;
 import com.petshop.common.Result;
+import com.petshop.log.annotation.LogOperation;
 import com.petshop.order.entity.Review;
 import com.petshop.order.service.ReviewService;
 import com.petshop.security.RequireLogin;
@@ -26,7 +27,7 @@ public class ReviewController {
 
     // ==================== 用户 ====================
 
-    @ApiOperation("提交评价（仅状态 3 订单，全部明细评价后订单→4）")
+    @ApiOperation("提交评价(仅状态 3 订单,全部明细评价后订单→4)")
     @RequireLogin
     @PostMapping("/reviews")
     public Result<Review> submit(@RequestBody Review review) {
@@ -44,7 +45,7 @@ public class ReviewController {
 
     // ==================== 商家/管理员 ====================
 
-    @ApiOperation("商家回复评价（ADMIN·MERCHANT 本店）")
+    @ApiOperation("商家回复评价(ADMIN·MERCHANT 本店)")
     @RequireRole({"ADMIN", "MERCHANT"})
     @PutMapping("/reviews/{id}/reply")
     public Result<Void> reply(@PathVariable Long id, @RequestBody Map<String, Object> body) {
@@ -53,7 +54,7 @@ public class ReviewController {
         return Result.success();
     }
 
-    @ApiOperation("后台评价管理列表（ADMIN 全站 / MERCHANT 仅本店）")
+    @ApiOperation("后台评价管理列表(ADMIN 全站 / MERCHANT 仅本店)")
     @RequireRole({"ADMIN", "MERCHANT"})
     @GetMapping("/reviews/manage")
     public Result<PageResult<Map<String, Object>>> manage(
@@ -66,16 +67,18 @@ public class ReviewController {
         return Result.success(reviewService.managePage(current, size, productId, rating, hasReply, showDeleted));
     }
 
-    @ApiOperation("删除违规评价（仅 ADMIN，逻辑删除）")
+    @ApiOperation("删除违规评价(仅 ADMIN,逻辑删除)")
     @RequireRole("ADMIN")
+    @LogOperation("删除评价")
     @DeleteMapping("/reviews/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         reviewService.deleteReview(id);
         return Result.success();
     }
 
-    @ApiOperation("恢复已删除评价（仅 ADMIN）")
+    @ApiOperation("恢复已删除评价(仅 ADMIN)")
     @RequireRole("ADMIN")
+    @LogOperation("恢复评价")
     @PutMapping("/reviews/{id}/restore")
     public Result<Void> restore(@PathVariable Long id) {
         reviewService.restoreReview(id);
@@ -84,7 +87,7 @@ public class ReviewController {
 
     // ==================== 公开（挂载在商品路径下） ====================
 
-    @ApiOperation("商品评价列表（公开，分页）")
+    @ApiOperation("商品评价列表(公开,分页)")
     @GetMapping("/products/{productId}/reviews")
     public Result<PageResult<Review>> productReviews(
             @PathVariable Long productId,

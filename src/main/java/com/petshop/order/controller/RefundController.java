@@ -2,8 +2,8 @@ package com.petshop.order.controller;
 
 import com.petshop.common.PageResult;
 import com.petshop.common.Result;
-import com.petshop.order.entity.Refund;
 import com.petshop.order.service.RefundService;
+import com.petshop.log.annotation.LogOperation;
 import com.petshop.security.RequireLogin;
 import com.petshop.security.RequireRole;
 import io.swagger.annotations.Api;
@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 退单接口（对应《项目接口设计文档》C 模块第 18~20 节）。
+ * 退单接口。
  */
 @Api(tags = "07-退单")
 @RestController
@@ -26,20 +26,17 @@ public class RefundController {
     @Autowired
     private RefundService refundService;
 
-    @ApiOperation("用户申请退单（2/3/4→-2，支持仅退款/退货退款、是否收到货）")
+    @ApiOperation("用户申请退单(2/3/4→-2,支持仅退款/退货退款、是否收到货)")
     @RequireLogin
     @PostMapping
     public Result<Map<String, Object>> apply(@RequestBody Map<String, Object> body) {
         Long orderId = toLong(body.get("orderId"));
-        BigDecimal amount = body.get("amount") != null
-                ? new BigDecimal(body.get("amount").toString()) : null;
+        BigDecimal amount = toBigDecimal(body.get("amount"));
         String reason = (String) body.get("reason");
         // 1仅退款 2退货退款
-        Integer refundType = body.get("refundType") != null
-                ? Integer.valueOf(body.get("refundType").toString()) : null;
+        Integer refundType = toInteger(body.get("refundType"));
         // 0未收到货(快递退款) 1已收到货
-        Integer received = body.get("received") != null
-                ? Integer.valueOf(body.get("received").toString()) : null;
+        Integer received = toInteger(body.get("received"));
         String description = (String) body.get("description");
         List<String> images = new java.util.ArrayList<>();
         if (body.get("images") instanceof List) {
@@ -51,18 +48,18 @@ public class RefundController {
                 refundType, received, description, images));
     }
 
-    @ApiOperation("后台审核退单（ADMIN·MERCHANT：仅退款通过→打款-3；退货退款通过→待用户退货；驳回→恢复原状态）")
+    @ApiOperation("后台审核退单(ADMIN·MERCHANT: 仅退款通过→打款-3; 退货退款通过→待用户退货; 驳回→恢复原状态)")
     @RequireRole({"ADMIN", "MERCHANT"})
+    @LogOperation("审核退单")
     @PutMapping("/{id}/audit")
     public Result<Void> audit(@PathVariable Long id, @RequestBody Map<String, Object> body) {
-        Integer status = body.get("status") != null
-                ? Integer.valueOf(body.get("status").toString()) : null;
+        Integer status = toInteger(body.get("status"));
         String remark = (String) body.get("auditRemark");
         refundService.auditRefund(id, status, remark);
         return Result.success();
     }
 
-    @ApiOperation("用户填写退货快递单号（退单状态3→4，等待商家确认收货）")
+    @ApiOperation("用户填写退货快递单号(退单状态3→4,等待商家确认收货)")
     @RequireLogin
     @PutMapping("/{id}/return-shipping")
     public Result<Void> returnShipping(@PathVariable Long id, @RequestBody Map<String, Object> body) {
@@ -72,7 +69,7 @@ public class RefundController {
         return Result.success();
     }
 
-    @ApiOperation("商家确认收到退货并打款（ADMIN·MERCHANT，退单状态4→1，订单-2→-3）")
+    @ApiOperation("商家确认收到退货并打款(ADMIN·MERCHANT,退单状态4→1,订单-2→-3)")
     @RequireRole({"ADMIN", "MERCHANT"})
     @PutMapping("/{id}/confirm-return")
     public Result<Void> confirmReturn(@PathVariable Long id, @RequestBody(required = false) Map<String, Object> body) {
@@ -81,7 +78,7 @@ public class RefundController {
         return Result.success();
     }
 
-    @ApiOperation("管理员直接退单（ADMIN·MERCHANT，3→-4）")
+    @ApiOperation("管理员直接退单(ADMIN·MERCHANT,3→-4)")
     @RequireRole("ADMIN")
     @PostMapping("/direct")
     public Result<Void> directRefund(@RequestBody Map<String, Object> body) {
@@ -93,7 +90,7 @@ public class RefundController {
         return Result.success();
     }
 
-    @ApiOperation("后台退单列表分页（ADMIN·MERCHANT）")
+    @ApiOperation("后台退单列表分页(ADMIN·MERCHANT)")
     @RequireRole({"ADMIN", "MERCHANT"})
     @GetMapping("/manage")
     public Result<PageResult<Map<String, Object>>> manage(
@@ -106,9 +103,35 @@ public class RefundController {
         return Result.success(refundService.managePage(current, size, shopId, status, refundNo, username));
     }
 
+    // ==================== 私有辅助方法 ====================
+
     private Long toLong(Object v) {
         if (v == null) return null;
         if (v instanceof Number) return ((Number) v).longValue();
-        return Long.parseLong(v.toString());
+        try {
+            return Long.parseLong(v.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private Integer toInteger(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number) return ((Number) v).intValue();
+        try {
+            return Integer.parseInt(v.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private BigDecimal toBigDecimal(Object v) {
+        if (v == null) return null;
+        if (v instanceof BigDecimal) return (BigDecimal) v;
+        try {
+            return new BigDecimal(v.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }
