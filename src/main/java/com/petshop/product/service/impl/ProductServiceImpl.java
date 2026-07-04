@@ -21,6 +21,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import java.math.BigDecimal;
 
 import java.util.List;
 
@@ -47,10 +48,16 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     @Autowired
     private com.petshop.shop.mapper.ShopMapper shopMapper;
 
-    private void applyDiscount(Product product, java.math.BigDecimal discount, String levelName) {
+    /**
+     * 【内部工具】：动态计算商品的会员折后价。
+     * 由于同一个商品在不同等级的用户眼里看到的价格是不一样的，所以数据库只存“原价”。
+     * 当商品被查询出来准备返回给前端展示时，临时用这个方法计算打折后的真实价格。
+     * 如果用户有折扣，会把原价暂存到 originalPrice 字段，方便前端做带划线的“原价展示”。
+     */
+    private void applyDiscount(Product product, BigDecimal discount, String levelName) {
         if (product == null) return;
-        if (discount == null) discount = java.math.BigDecimal.ONE;
-        if (discount.compareTo(java.math.BigDecimal.ONE) < 0) {
+        if (discount == null) discount =BigDecimal.ONE;
+        if (discount.compareTo(BigDecimal.ONE) < 0) {
             product.setOriginalPrice(product.getPrice());
             if (product.getPrice() != null) {
                 product.setPrice(product.getPrice().multiply(discount));
@@ -64,12 +71,18 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
                     }
                     sku.setUserDiscount(discount);
                 }
-            }
+            } 
         } else {
-            product.setUserDiscount(java.math.BigDecimal.ONE);
+            product.setUserDiscount(BigDecimal.ONE);
         }
     }
 
+    /**
+     * 【内部工具】：批量补全商品的店铺名称。
+     * 商品表（product）里只存了 shop_id。为了减少数据库连表查询（JOIN）的压力，
+     * 我们在代码层面上把查出来的一批商品的 shop_id 收集起来，再去店铺表（shop）里批量查名字，
+     * 最后再把名字一个个对应着塞回商品对象里（如果没有挂载店铺，默认显示为“宠物商城自营”）。
+     */
     private void fillShopNames(List<Product> products) {
         if (products == null || products.isEmpty()) return;
         List<Long> shopIds = products.stream()
@@ -95,9 +108,14 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         }
     }
 
+    /**
+     * 【内部工具】：商品查询的最终后处理。
+     * 每次从数据库里分页或者单条查出商品后，必须调用这个统一的方法，
+     * 把“千人千面的会员折扣价”和“店铺名称”这两个必须要在展示时才算得出来的动态属性组装进去。
+     */
     private void applyDiscountAndShopName(List<Product> list) {
         if (list == null || list.isEmpty()) return;
-        java.math.BigDecimal discount = membershipLevelService.getCurrentUserDiscount();
+        BigDecimal discount = membershipLevelService.getCurrentUserDiscount();
         String levelName = membershipLevelService.getCurrentUserLevelName();
         for (Product p : list) {
             applyDiscount(p, discount, levelName);
@@ -108,20 +126,24 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     @Override
     @Transactional(rollbackFor = Exception.class)   // 主表+子表：任一步抛异常就整体回滚
     public void createProduct(Product product) {
-        // 1) 归属校验：商家只能给自己的店加商品；ADMIN 放行
+        // 1) 权限校验：防越权，商家绝不能把商品建在别人家的店铺里
         ownershipChecker.assertShopOwned(product.getShopId());
-        // 2) 两类商品：type=1 宠物 → 库存恒为 1、无多规格
+        
+        // 2) 宠物活体特殊处理：(type=1 活体宠物) 库存永远只有 1 只，且绝对没有 SKU（宠物不能选大中小号）
         if (product.getType() != null && product.getType() == 1) {
             product.setStock(1);
             product.setSkus(null);
         }
-        // 3) 默认值兜底
+        
+        // 3) 设置默认值兜底：新上架商品默认生效(1)，初始销量为 0
         if (product.getStatus() == null) product.setStatus(1);
         if (product.getSales() == null) product.setSales(0);
-        product.setId(null);
-        // 4) 先存主表（save 回填 id）
+        product.setId(null); // 防止前端恶作剧传ID导致覆盖别人的商品
+        
+        // 4) 第一步入库：先保存商品主表（MyBatis-Plus 会自动把刚生成的自增 ID 填回到 product 对象里）
         this.save(product);
-        // 5) 再存子表（绑定刚生成的 productId）
+        
+        // 5) 第二步入库：再保存商品的 SKU 子表（把刚才拿到的主表 ID 绑定到每一个 SKU 上，形成父子关联）
         List<ProductSku> skus = product.getSkus();
         if (skus != null && !skus.isEmpty()) {
             for (ProductSku sku : skus) {
@@ -134,38 +156,48 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
 
     @Override
     public Product getProductById(Long id) {
+        // 1) 先查出商品的主表基本信息
         Product product = this.getById(id);
         if (product == null) {
             throw new BusinessException(ResultCode.NOT_FOUND);
         }
-        // 反向组装：查出「属于该商品」的所有 SKU 塞回去（条件是 product_id，不是 id）
+        
+        // 2) 【反向组装模式】：因为数据库是拆开存的，所以这里要根据主表 ID 去子表捞出所有的 SKU（规格），手动塞回商品对象里
+        // 注意：条件是 product_id = id，而不是直接查 sku.id
         List<ProductSku> skus = productSkuMapper.selectList(
                 new QueryWrapper<ProductSku>().eq("product_id", id));
         product.setSkus(skus);
+        
+        // 3) 为这件商品动态计算“当前登录用户的会员折后价”，并补充完整的店铺名称（为了前台漂亮地展示）
         applyDiscountAndShopName(java.util.Collections.singletonList(product));
+        
         return product;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void updateProduct(Product product) {
-        // 按「商品真实归属」校验：防止商家传自己的 shopId 却改别人的商品（越权）
+        // 1) 防越权校验：必须根据【商品本身的真实归属】来校验，严防恶意商家通过修改接口把别人的商品挂到自己店里
         ownershipChecker.assertProductOwned(product.getId());
-        product.setShopId(null);   // 不允许通过修改接口把商品挪到别的店
+        product.setShopId(null);   // 强行把 shopId 设为空，防止修改操作发生店铺转移
         
+        // 2) 宠物活体特殊处理（同创建逻辑：单只活物无多规格）
         if (product.getType() != null && product.getType() == 1) {
             product.setStock(1);
             product.setSkus(null);
         }
 
+        // 3) 先更新主表基本信息
         boolean ok = this.updateById(product);
         if (!ok) {
             throw new BusinessException(ResultCode.NOT_FOUND);
         }
 
-        // 全量替换 SKU：先删后插
+        // 4) 【暴力全量替换 SKU 模式】：为了防止前台传来的 SKU 列表错乱（增删改混杂），
+        // 最简单可靠的办法就是：先把这件商品旧的 SKU 全删光！
         productSkuMapper.delete(new QueryWrapper<ProductSku>().eq("product_id", product.getId()));
         
+        // 5) 然后再把前端传过来的最新 SKU 列表作为全新的数据，一条条重新插进去
         List<ProductSku> skus = product.getSkus();
         if (skus != null && !skus.isEmpty()) {
             for (ProductSku sku : skus) {
@@ -456,7 +488,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public java.math.BigDecimal checkPriceAndDeductStock(Long productId, Long skuId, Integer quantity) {
+    public BigDecimal checkPriceAndDeductStock(Long productId, Long skuId, Integer quantity) {
         if (quantity == null || quantity <= 0) {
             throw new BusinessException(ResultCode.PARAM_ERROR.getCode(), "购买数量必须大于0");
         }

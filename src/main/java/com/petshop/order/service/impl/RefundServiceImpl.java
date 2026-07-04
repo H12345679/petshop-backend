@@ -75,30 +75,34 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         Long userId = UserContext.getUserId();
         if (userId == null) throw new BusinessException(ResultCode.UNAUTHORIZED);
 
+        // 1) 权限与存在性校验：确保要退款的订单是这个用户本人的
         Order order = orderMapper.selectById(orderId);
         if (order == null) throw new BusinessException(ResultCode.NOT_FOUND);
         if (!userId.equals(order.getUserId())) throw new BusinessException(ResultCode.FORBIDDEN);
 
+        // 2) 订单状态校验：只有处于【待收货】、【已收货】、【已评价】这三种售后期的订单，才允许发起退单申请
         int currentStatus = order.getStatus();
         if (currentStatus != 2 && currentStatus != 3 && currentStatus != 4) {
             throw new BusinessException("当前订单状态不可申请退款（" + statusDesc(currentStatus) + "）");
         }
 
+        // 3) 智能纠错与类型判定 (type 1:仅退款, 2:退货退款)
         int type = (refundType != null && refundType == 2) ? 2 : 1;
-        // 只有待收货(2)才可能"未收到货"；已收货(3)/已评价(4)一定收到了货
+        // 如果订单处于待收货状态，并且用户声明“未收到货”（比如快递丢了），那说明用户手里根本没实物可退，此时必须强制走“仅退款”
         int recv = (currentStatus == 2 && received != null && received == 0) ? 0 : 1;
         if (recv == 0) {
-            // 未收到货（快递退回/丢件）没有货可退，只能仅退款
             type = 1;
         }
+        // 反之，如果订单都已经评价了，说明货肯定已经收到并拆开用了，此时想退款只能走“退货退款”把实物寄回来
         if (currentStatus == 4 && type != 2) {
             throw new BusinessException("已评价的订单退款必须退货，请选择退货退款");
         }
 
-        // 退款金额不能超过订单实付
+        // 4) 金额防刷校验：不管用户填多少，退款金额绝不能超过当时买东西时实际掏的钱
         BigDecimal refundAmount = (amount != null && amount.compareTo(order.getPayAmount()) <= 0)
                 ? amount : order.getPayAmount();
 
+        // 5) 创建退款工单：记录用户的申请理由和凭证，初始状态设为 0 (等待商家审核)
         Refund refund = new Refund();
         refund.setRefundNo(nextRefundNo());
         refund.setOrderId(orderId);
@@ -107,17 +111,19 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         refund.setReason(reason);
         refund.setDescription(description);
         refund.setImages(toJsonArray(images));
-        refund.setType(1);   // 用户申请
+        refund.setType(1);   // 1代表是“用户自己发起的申请”
         refund.setRefundType(type);
         refund.setReceived(recv);
         refund.setStatus(0); // 申请中
         this.save(refund);
 
-        // 备份原状态
+        // 6) 冻结主订单：先把主订单原本的状态（比如“待收货”）备份到 prevStatus 里，然后将其标记为 -2 (退款售后中)。
+        // 这样可以防止用户在退款扯皮期间，又手贱去点击“确认收货”或者“去评价”，从而避免整个交易状态乱套。
         order.setPrevStatus(currentStatus);
         order.setStatus(-2);
         orderMapper.updateById(order);
 
+        // 7) 记录操作日志，留档备查
         String logRemark = (type == 2 ? "[退货退款] " : (recv == 0 ? "[仅退款·未收到货] " : "[仅退款] ")) + reason;
         saveStatusLog(orderId, currentStatus, -2, userId, "USER", logRemark);
 
@@ -134,70 +140,85 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         String role = UserContext.getRole();
         if (operatorId == null) throw new BusinessException(ResultCode.UNAUTHORIZED);
 
+        // 1) 校验退单存不存在、是不是还在等待处理阶段（0）
         Refund refund = this.getById(refundId);
         if (refund == null) throw new BusinessException(ResultCode.NOT_FOUND);
         if (refund.getStatus() == null || refund.getStatus() != 0) {
-            throw new BusinessException("该退单已处理");
+            throw new BusinessException("该退单已被处理，请勿重复操作");
         }
 
+        // 2) 校验商家权限，确保商家只能审核属于自己店铺的退单
         Order order = orderMapper.selectById(refund.getOrderId());
         if (order == null) throw new BusinessException("关联订单不存在");
         ownershipChecker.assertOrderOwned(order.getId());
 
-        if (status != null && status == 1) {
+        if (status != null && status == 1) { // 商家点击了【同意】按钮
             boolean needReturn = refund.getRefundType() != null && refund.getRefundType() == 2;
 
             if (needReturn) {
-                // ===== 退货退款：同意退货，等用户寄回填单号，先不打款 =====
-                refund.setStatus(3); // 待用户退货
+                // ===== 场景 A：【退货退款】 =====
+                // 商家虽然同意了，但现在还不能直接退钱。必须让退单进入等待环节，等用户把货找快递寄回来。
+                refund.setStatus(3); // 3: 待用户退货
                 refund.setAuditUserId(operatorId);
                 refund.setAuditTime(LocalDateTime.now());
                 refund.setAuditRemark(auditRemark);
                 this.updateById(refund);
 
-                // 订单停留在 -2，仅记录流转日志
+                // 主订单继续保持被冻结的 -2 状态，在此环节只追加一条日志
                 saveStatusLog(order.getId(), -2, -2, operatorId, role,
                         "同意退货，待用户寄回并填写退货单号" + (auditRemark != null && !auditRemark.isEmpty() ? "：" + auditRemark : ""));
             } else {
-                // ===== 仅退款：审核通过直接打款 → -3 =====
+                // ===== 场景 B：【仅退款】 =====
+                // 这种情况下（无论是快递丢了还是质量问题只退钱），商家一点同意，无需寄快递，直接执行财务打款流程！
                 int from = order.getStatus();
                 OrderStatus.checkTransition(from, -3);
 
                 BigDecimal refundAmount = refund.getAmount();
                 if (refundAmount.compareTo(order.getPayAmount()) > 0) {
-                    refundAmount = order.getPayAmount();
+                    refundAmount = order.getPayAmount(); // 最后的防御性编程：退款金额绝不可能大于实付
                 }
+                
+                // 执行真实的财务打款动作（本项目中是直接退回给用户的虚拟余额）
                 refundToBalance(order, refundAmount);
 
+                // 更新退款工单状态为已完成(1)
                 refund.setStatus(1);
                 refund.setAuditUserId(operatorId);
                 refund.setAuditTime(LocalDateTime.now());
                 refund.setAuditRemark(auditRemark);
                 this.updateById(refund);
 
+                // 更新主订单状态为彻底终结(-3：退款关闭)
                 order.setStatus(-3);
                 orderMapper.updateById(order);
 
                 saveStatusLog(order.getId(), from, -3, operatorId, role, auditRemark);
-                // 退款成功后恢复库存
+                
+                // 因为交易取消了，所以要把当初扣掉的商品库存重新还回去，好让别的用户还能买
                 rollbackStock(order.getId());
             }
 
         } else {
-            // ===== 驳回 → 恢复原状态 =====
+            // ===== 场景 C：商家【驳回（拒绝）】退款请求 =====
             int from = order.getStatus();
             Integer prev = order.getPrevStatus();
+            
+            // 确保我们还能找到退款前的状态，否则没法恢复
             if (prev == null || (prev != 2 && prev != 3 && prev != 4)) {
-                throw new BusinessException("无法恢复原状态");
+                throw new BusinessException("订单数据异常，无法恢复原状态");
             }
             OrderStatus.checkTransition(from, prev);
 
+            // 1. 退单盖上“已拒绝”的印章
             refund.setStatus(2); // 审核拒绝
             refund.setAuditUserId(operatorId);
             refund.setAuditTime(LocalDateTime.now());
             refund.setAuditRemark(auditRemark);
             this.updateById(refund);
 
+            // 2. 【核心动作：解冻主订单】
+            // 把之前备份的 prevStatus 取出来还原给订单，同时清空备份字段。
+            // 这样订单就又变回“待收货”或“已收货”了，生命周期继续往下走。
             order.setStatus(prev);
             order.setPrevStatus(null);
             orderMapper.updateById(order);

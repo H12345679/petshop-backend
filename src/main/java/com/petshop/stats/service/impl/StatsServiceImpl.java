@@ -40,9 +40,12 @@ public class StatsServiceImpl implements StatsService {
 
     @Override
     public Map<String, Object> getKpi() {
+        // 1) 鉴权与身份识别：判断当前是超级管理员还是普通商家。
+        // 如果是商家，只能看到自己名下店铺的数据（通过 ownershipChecker 获取 shopIds）。
         List<Long> shopIds = ownershipChecker.myShopIds();
         Map<String, Object> data = new HashMap<>();
 
+        // 如果是商家，但是他名下一家店都没有，那就直接返回一堆 0 鸭蛋，没必要查数据库了。
         if (shopIds != null && shopIds.isEmpty()) {
             data.put("todayRevenue", BigDecimal.ZERO);
             data.put("todayOrders", 0);
@@ -51,6 +54,8 @@ public class StatsServiceImpl implements StatsService {
             return data;
         }
 
+        // 2) 统计【今日营收】和【今日有效订单数】
+        // 抓取今天零点以后的所有非取消状态（>=0）的有效订单
         LocalDateTime todayStart = LocalDate.now().atStartOfDay();
         LambdaQueryWrapper<Order> orderWrapper = new LambdaQueryWrapper<>();
         orderWrapper.ge(Order::getCreateTime, todayStart).ge(Order::getStatus, 0);
@@ -59,6 +64,7 @@ public class StatsServiceImpl implements StatsService {
         }
         List<Order> todayOrdersList = orderMapper.selectList(orderWrapper);
 
+        // 利用 Stream 流把每一单的实付金额累加起来，这就是今日总营收
         BigDecimal todayRevenue = todayOrdersList.stream()
                 .map(o -> o.getPayAmount() != null ? o.getPayAmount() : (o.getTotalAmount() != null ? o.getTotalAmount() : BigDecimal.ZERO))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -108,6 +114,7 @@ public class StatsServiceImpl implements StatsService {
 
     @Override
     public Map<String, Object> getSalesTrend(Integer days) {
+        // 1) 默认查询最近 7 天的走势
         if (days == null || days <= 0) days = 7;
         List<String> dates = new ArrayList<>();
         List<Integer> orderCounts = new ArrayList<>();
@@ -116,6 +123,7 @@ public class StatsServiceImpl implements StatsService {
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MM-dd");
         LocalDate now = LocalDate.now();
 
+        // 2) 身份隔离：没店铺的商家直接返回一堆 0，不要走下面的复杂逻辑
         List<Long> shopIds = ownershipChecker.myShopIds();
         if (shopIds != null && shopIds.isEmpty()) {
             for (int i = days - 1; i >= 0; i--) {
@@ -130,6 +138,8 @@ public class StatsServiceImpl implements StatsService {
             return res;
         }
 
+        // 3) 高效查询：去订单表里一次性把这几天内的有效订单全部捞出来，然后在内存里按天做归类累加。
+        // 这样比写复杂的 SQL GROUP BY 更好维护，且能兼容不同的数据库方言。
         LocalDateTime startTime = now.minusDays(days - 1).atStartOfDay();
         LambdaQueryWrapper<Order> query = new LambdaQueryWrapper<>();
         query.ge(Order::getCreateTime, startTime).ge(Order::getStatus, 0);
@@ -140,6 +150,7 @@ public class StatsServiceImpl implements StatsService {
 
         boolean hasRealData = (shopIds != null) || !allOrders.isEmpty();
 
+        // 【Demo 兜底机制】：如果是刚部署的系统（全平台没有真实订单），为了让大盘折线图好看点，塞一组假数据作为演示。一旦有了真实订单，就会自动切换。
         int[] demoOrders = {2, 3, 5, 2, 6, 8, 4, 5, 7, 3, 6, 9, 5, 4, 6, 8, 5, 7, 4, 6, 5, 8, 7, 9, 6, 5, 8, 7, 6, 4};
         double[] demoRevs = {1200, 1800, 3100, 1500, 3800, 5200, 2410, 3200, 4500, 1900, 3700, 5800, 3100, 2600, 3900, 5100, 3200, 4400, 2500, 3800, 3100, 5000, 4300, 5900, 3800, 3100, 4900, 4200, 3600, 2410};
 
@@ -175,6 +186,8 @@ public class StatsServiceImpl implements StatsService {
             return new ArrayList<>();
         }
 
+        // 一次性捞出所有订单，然后在内存中用 Stream 流的高级特性（groupingBy）按状态分组统计，
+        // 这样可以避免对数据库进行高频词的 COUNT 分组查询，大大提高数据看板的响应速度。
         LambdaQueryWrapper<Order> query = new LambdaQueryWrapper<>();
         if (shopIds != null) {
             query.in(Order::getShopId, shopIds);

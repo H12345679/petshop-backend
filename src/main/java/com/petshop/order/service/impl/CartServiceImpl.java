@@ -18,6 +18,7 @@ import com.petshop.shop.mapper.ShopMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.util.*;
 
 /**
@@ -45,16 +46,17 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
         Long userId = requireUserId();
         Long productId = cartItem.getProductId();
         Long skuId = cartItem.getSkuId() == null ? 0L : cartItem.getSkuId();
-        int qty = cartItem.getQuantity() == null || cartItem.getQuantity() <= 0
+        // 确保加车数量至少为 1
+        int quantity = cartItem.getQuantity() == null || cartItem.getQuantity() <= 0
                 ? 1 : cartItem.getQuantity();
 
-        // 1) 校验商品是否存在且上架
+        // 1) 校验目标商品是否存在且处于上架状态
         Product product = productMapper.selectById(productId);
         if (product == null || product.getStatus() == null || product.getStatus() != 1) {
             throw new BusinessException("商品不存在或已下架");
         }
 
-        // 2) 如果有规格，校验规格是否存在
+        // 2) 如果该商品拥有多规格（SKU），则校验用户所选的具体规格是否存在且匹配当前商品
         if (skuId != 0) {
             ProductSku sku = productSkuMapper.selectById(skuId);
             if (sku == null || !sku.getProductId().equals(productId)) {
@@ -62,139 +64,146 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
             }
         }
 
-        // 3) 唯一键 uk_user_product_sku 判重：已存在就递增数量
-        LambdaQueryWrapper<CartItem> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(CartItem::getUserId, userId)
-               .eq(CartItem::getProductId, productId)
-               .eq(CartItem::getSkuId, skuId);
-        CartItem exist = this.getOne(wrapper);
-        if (exist != null) {
-            exist.setQuantity(exist.getQuantity() + qty);
-            this.updateById(exist);
+        // 3) 依靠数据库的唯一约束 (userId, productId, skuId) 判断该商品是否已经在购物车中。
+        // 如果已经存在，则直接累加数量，避免购物车出现重复条目。
+        LambdaQueryWrapper<CartItem> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(CartItem::getUserId, userId)
+                    .eq(CartItem::getProductId, productId)
+                    .eq(CartItem::getSkuId, skuId);
+        
+        CartItem existingCartItem = this.getOne(queryWrapper);
+        if (existingCartItem != null) {
+            existingCartItem.setQuantity(existingCartItem.getQuantity() + quantity);
+            this.updateById(existingCartItem);
             return;
         }
 
-        // 4) 新增
+        // 4) 如果是不在购物车的新商品，则初始化各项默认值并保存为新条目
         cartItem.setId(null);
         cartItem.setUserId(userId);
         cartItem.setSkuId(skuId);
-        cartItem.setQuantity(qty);
-        cartItem.setSelected(0); // 默认不勾选
+        cartItem.setQuantity(quantity);
+        cartItem.setSelected(0); // 新加入购物车的商品默认处于“未勾选”状态
         this.save(cartItem);
     }
 
     @Override
     public void updateQuantity(Long cartId, Integer quantity) {
-        CartItem item = assertMyCart(cartId);
+        CartItem cartItem = getAndValidateMyCartItem(cartId);
         if (quantity == null || quantity <= 0) {
-            throw new BusinessException(ResultCode.PARAM_ERROR.getCode(), "数量必须大于0");
+            throw new BusinessException(ResultCode.PARAM_ERROR.getCode(), "商品数量必须大于0");
         }
-        item.setQuantity(quantity);
-        this.updateById(item);
+        cartItem.setQuantity(quantity);
+        this.updateById(cartItem);
     }
 
     @Override
     public void removeFromCart(Long cartId) {
-        CartItem item = assertMyCart(cartId);
-        // 物理删除
-        this.removeById(item.getId());
+        CartItem cartItem = getAndValidateMyCartItem(cartId);
+        // 直接从数据库中物理删除该购物车条目
+        this.removeById(cartItem.getId());
     }
 
     @Override
     public void toggleSelect(Long cartId, Integer selected) {
-        CartItem item = assertMyCart(cartId);
-        item.setSelected(selected != null && selected == 1 ? 1 : 0);
-        this.updateById(item);
+        CartItem cartItem = getAndValidateMyCartItem(cartId);
+        cartItem.setSelected(selected != null && selected == 1 ? 1 : 0);
+        this.updateById(cartItem);
     }
 
     @Override
     public List<Map<String, Object>> getCartList() {
         Long userId = UserContext.getUserId();
-        List<CartItem> items = baseMapper.selectList(
+        // 按创建时间倒序查询出该用户购物车内的所有条目
+        List<CartItem> userCartItems = baseMapper.selectList(
                 new QueryWrapper<CartItem>().eq("user_id", userId).orderByDesc("create_time"));
 
-        java.math.BigDecimal discount = membershipLevelService.getCurrentUserDiscount();
+        // 获取当前登录用户的会员折扣率，以便在购物车中直接展示会员优惠价
+        BigDecimal membershipDiscountRate = membershipLevelService.getCurrentUserDiscount();
 
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (CartItem item : items) {
-            Map<String, Object> vo = new LinkedHashMap<>();
-            vo.put("id", item.getId());
-            vo.put("userId", item.getUserId());
-            vo.put("productId", item.getProductId());
-            vo.put("skuId", item.getSkuId());
-            vo.put("quantity", item.getQuantity());
-            vo.put("selected", item.getSelected());
-            vo.put("createTime", item.getCreateTime());
+        List<Map<String, Object>> resultList = new ArrayList<>();
+        for (CartItem item : userCartItems) {
+            Map<String, Object> cartItemDetail = new LinkedHashMap<>();
+            cartItemDetail.put("id", item.getId());
+            cartItemDetail.put("userId", item.getUserId());
+            cartItemDetail.put("productId", item.getProductId());
+            cartItemDetail.put("skuId", item.getSkuId());
+            cartItemDetail.put("quantity", item.getQuantity());
+            cartItemDetail.put("selected", item.getSelected());
+            cartItemDetail.put("createTime", item.getCreateTime());
 
-            // 聚合商品信息
+            // 聚合关联的商品基础信息
             Product product = productMapper.selectById(item.getProductId());
             if (product != null) {
-                vo.put("productName", product.getName());
-                vo.put("productImage", product.getMainImage());
-                vo.put("productStatus", product.getStatus());
-                vo.put("shopId", product.getShopId());
-                // 查店铺名称
+                cartItemDetail.put("productName", product.getName());
+                cartItemDetail.put("productImage", product.getMainImage());
+                cartItemDetail.put("productStatus", product.getStatus());
+                cartItemDetail.put("shopId", product.getShopId());
+                // 根据商品的 shopId 查询关联的店铺名称，方便前端在购物车按店铺分组显示
                 Shop shop = shopMapper.selectById(product.getShopId());
-                vo.put("shopName", shop != null ? shop.getName() : "");
+                cartItemDetail.put("shopName", shop != null ? shop.getName() : "");
             }
 
-            // 规格信息 + 实时价格与库存
-            int valid = 1; // 默认有效
+            // 获取具体的规格信息，并关联实时的价格与库存数据
+            int isValid = 1; // 标识该商品当前是否仍可购买（1：可购买，0：已失效）
             if (item.getSkuId() != null && item.getSkuId() != 0) {
                 ProductSku sku = productSkuMapper.selectById(item.getSkuId());
                 if (sku != null) {
-                    vo.put("specName", sku.getSpecName());
-                    // price=原价（与订单/结算口径一致），memberPrice=会员折后价（供购物车展示会员价）
-                    vo.put("price", sku.getPrice());
-                    vo.put("memberPrice", sku.getPrice() != null ? sku.getPrice().multiply(discount) : null);
-                    vo.put("stock", sku.getStock());
-                    vo.put("skuDeleted", sku.getDeleted());
-                    if (sku.getDeleted() != null && sku.getDeleted() == 1) valid = 0;
+                    cartItemDetail.put("specName", sku.getSpecName());
+                    // price为划线原价（与订单和结算逻辑统一）
+                    cartItemDetail.put("price", sku.getPrice());
+                    // memberPrice为会员折后价，等于 原价 * 会员折扣率
+                    cartItemDetail.put("memberPrice", sku.getPrice() != null ? sku.getPrice().multiply(membershipDiscountRate) : null);
+                    cartItemDetail.put("stock", sku.getStock());
+                    cartItemDetail.put("skuDeleted", sku.getDeleted());
+                    // 如果规格已经被删除，则标记购物车内的该商品为失效状态
+                    if (sku.getDeleted() != null && sku.getDeleted() == 1) isValid = 0;
                 } else {
-                    valid = 0;
-                    vo.put("skuDeleted", 1);
+                    isValid = 0;
+                    cartItemDetail.put("skuDeleted", 1);
                 }
             } else {
+                // 如果商品没有多规格属性，则直接使用主商品的价格和库存
                 if (product != null) {
-                    vo.put("specName", "");
-                    vo.put("price", product.getPrice());
-                    vo.put("memberPrice", product.getPrice() != null ? product.getPrice().multiply(discount) : null);
-                    vo.put("stock", product.getStock());
+                    cartItemDetail.put("specName", "");
+                    cartItemDetail.put("price", product.getPrice());
+                    cartItemDetail.put("memberPrice", product.getPrice() != null ? product.getPrice().multiply(membershipDiscountRate) : null);
+                    cartItemDetail.put("stock", product.getStock());
                 }
             }
 
-            // 商品下架则失效
+            // 如果主商品已经被删除或手动下架，同样标记为失效
             if (product == null || product.getStatus() == null || product.getStatus() != 1) {
-                valid = 0;
+                isValid = 0;
             }
 
-            vo.put("valid", valid);
-            result.add(vo);
+            cartItemDetail.put("valid", isValid);
+            resultList.add(cartItemDetail);
         }
-        return result;
+        return resultList;
     }
 
     // ========== 内部方法 ==========
 
     /** 获取当前用户 id，未登录抛 401 */
     private Long requireUserId() {
-        Long uid = UserContext.getUserId();
-        if (uid == null) {
+        Long userId = UserContext.getUserId();
+        if (userId == null) {
             throw new BusinessException(ResultCode.UNAUTHORIZED);
         }
-        return uid;
+        return userId;
     }
 
-    /** 校验购物车项属于当前用户，不存在则抛 404 */
-    private CartItem assertMyCart(Long cartId) {
-        Long userId = requireUserId();
-        CartItem item = this.getById(cartId);
-        if (item == null) {
+    /** 安全校验：验证该购物车项属于当前登录用户，防止越权操作，不存在则抛 404 */
+    private CartItem getAndValidateMyCartItem(Long cartId) {
+        Long currentUserId = requireUserId();
+        CartItem cartItem = this.getById(cartId);
+        if (cartItem == null) {
             throw new BusinessException(ResultCode.NOT_FOUND);
         }
-        if (!userId.equals(item.getUserId())) {
+        if (!currentUserId.equals(cartItem.getUserId())) {
             throw new BusinessException(ResultCode.FORBIDDEN);
         }
-        return item;
+        return cartItem;
     }
 }

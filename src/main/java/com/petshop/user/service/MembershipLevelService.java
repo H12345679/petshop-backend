@@ -2,6 +2,7 @@ package com.petshop.user.service;
 
 import com.petshop.user.entity.MembershipLevel;
 import com.petshop.user.model.vo.UpgradeVO;
+import java.math.BigDecimal;
 
 import java.util.List;
 
@@ -14,7 +15,7 @@ public interface MembershipLevelService {
     UpgradeVO upgrade(Long userId);
 
     /** 获取当前登录用户的折扣率 (无折算1.0) */
-    java.math.BigDecimal getCurrentUserDiscount();
+    BigDecimal getCurrentUserDiscount();
 
     /** 获取当前登录用户的会员等级名称 (未登录或非会员返回null) */
     String getCurrentUserLevelName();

@@ -47,7 +47,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
- * 订单 Service 实现——整个 C 模块最核心的类。
+ * 订单 Service 实现
  * <p>
  * 涵盖：结算预览、下单（跨店拆单 + 幂等 + CAS 锁券 + 库存扣减 + 优惠分摊）、
  * 我的订单、后台订单管理。
@@ -108,7 +108,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             throw new BusinessException("购买项不能为空");
         }
 
-        // 1) 逐项校验商品与规格，计算总金额
+        // 1) 第一步：把用户打算买的商品拉出来，挨个算钱。如果有 SKU（例如“红色 XL码”），就拿 SKU 的价格；如果没有，就拿基础款的价格。汇总得出商品总原价。
         BigDecimal totalAmount = BigDecimal.ZERO;
         for (Map<String, Object> item : items) {
             Long productId = toLong(item.get("productId"));
@@ -116,7 +116,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             int qty = toInt(item.get("quantity"), 1);
 
             Product product = getValidProduct(productId);
-            BigDecimal price;
+            BigDecimal price=BigDecimal.ZERO;
             if (skuId != null && skuId != 0) {
                 ProductSku sku = getValidSku(skuId, productId);
                 price = sku.getPrice();
@@ -129,27 +129,27 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             totalAmount = totalAmount.add(price.multiply(BigDecimal.valueOf(qty)));
         }
 
-        // 2) 会员折扣试算
-        java.math.BigDecimal userDiscountRate = membershipLevelService.getCurrentUserDiscount();
+        // 2) 第二步：算完原价后，看看用户是不是尊贵的会员。按 VIP 等级先打个基础折扣，得出【会员折扣金额】和【会员折后总价】。
+        BigDecimal userDiscountRate = membershipLevelService.getCurrentUserDiscount();
         BigDecimal memberDiscount = totalAmount.multiply(BigDecimal.ONE.subtract(userDiscountRate));
         BigDecimal amountAfterMember = totalAmount.subtract(memberDiscount);
 
-        // 3) 优惠券折扣试算
+        // 3) 第三步：处理额外用的优惠券。得严格检查这张券：是不是本人的？是不是还没用过？是不是还在有效期？
         BigDecimal couponDiscount = BigDecimal.ZERO;
         Long effectiveUserCouponId = 0L;
         if (userCouponId != null && userCouponId > 0) {
-            UserCoupon uc = userCouponMapper.selectById(userCouponId);
-            if (uc == null || !uc.getUserId().equals(userId)) {
+            UserCoupon userCoupon = userCouponMapper.selectById(userCouponId);
+            if (userCoupon == null || !userCoupon.getUserId().equals(userId)) {
                 throw new BusinessException("优惠券不存在");
             }
-            if (uc.getStatus() != null && uc.getStatus() != 0) {
+            if (userCoupon.getStatus() != null && userCoupon.getStatus() != 0) {
                 throw new BusinessException("优惠券不可用");
             }
-            Coupon coupon = couponMapper.selectById(uc.getCouponId());
+            Coupon coupon = couponMapper.selectById(userCoupon.getCouponId());
             if (coupon != null && coupon.getStatus() == 1
                     && !LocalDateTime.now().isBefore(coupon.getStartTime())
                     && !LocalDateTime.now().isAfter(coupon.getEndTime())) {
-                // 门槛按商品原价总额判定（与前端 couponUsable 及"满X元"惯例一致），折扣仍按会员折后价计算
+                // 【核心规则】：优惠券的“满减门槛”是按商品的【原价总额】来算的（为了让用户更容易凑单），但减掉的钱（若是折扣券）是基于【会员折后价】来算的，双重优惠不叠加。
                 if (totalAmount.compareTo(coupon.getThreshold()) >= 0) {
                     if (coupon.getType() == 1) {
                         // 满减
@@ -166,7 +166,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
         // memberDiscount 已在上面计算
 
-        // 4) 组装响应
+        // 4) 第四步：算算到底帮用户省了多少钱（会员折扣 + 优惠券），最后实付还得掏多少钱，把明细打包发给前端用于展示。
         BigDecimal discountAmount = memberDiscount.add(couponDiscount);
         BigDecimal payAmount = totalAmount.subtract(discountAmount);
         if (payAmount.compareTo(BigDecimal.ZERO) < 0) payAmount = BigDecimal.ZERO;
@@ -194,7 +194,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             throw new BusinessException("购买项不能为空");
         }
 
-        // 0) 幂等防重
+        // 0) 第零步：【幂等防重机制】。如果用户手抖连点了两下支付，前端会带过来一个独一无二的 requestId，我们通过 Redis 拦截掉第二次重复的请求，防止生成双份订单。
         if (requestId != null && !requestId.isEmpty()) {
             String redisKey = REDIS_REQUEST_ID_PREFIX + requestId;
             Object cached = redisUtil.get(redisKey);
@@ -207,11 +207,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             }
         }
 
-        // 1) 校验收货地址
-        Long addrId = validateAddressId(addressId, userId);
-        Address addr = addressMapper.selectById(addrId);
+        // 1) 第一步：检查收货地址是否存在以及是否属于当前用户。
+        Long validAddressId = validateAddressId(addressId, userId);
+        Address address = addressMapper.selectById(validAddressId);
 
-        // 2) 逐项校验商品、SKU、库存，同时按 shop_id 分组
+        // 2) 第二步：【非常关键的核对】挨个检查你想买的商品状态、价格对不对，并且提前检查【库存够不够】。这里如果库存不够就会直接拦截，必须在后续复杂的算账之前做完。
         List<ItemLine> itemLines = new ArrayList<>();
         for (Map<String, Object> item : items) {
             Long productId = toLong(item.get("productId"));
@@ -242,13 +242,13 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             itemLines.add(new ItemLine(product, skuId, price, qty, product.getShopId(), specName));
         }
 
-        // 3) 按 shopId 分组（跨店拆单）
+        // 3) 第三步：【跨店购物车拆单核心逻辑】。由于是平台模式，用户勾选的商品可能属于不同的商家。所以我们按 shopId 把商品分门别类，一会儿要生成多个独立的子订单。
         Map<Long, List<ItemLine>> grouped = itemLines.stream()
                 .collect(Collectors.groupingBy(ItemLine::getShopId, LinkedHashMap::new, Collectors.toList()));
 
         // 4) 总金额
         BigDecimal totalOrderAmount = itemLines.stream()
-                .map(l -> l.price.multiply(BigDecimal.valueOf(l.qty)))
+                .map(line -> line.price.multiply(BigDecimal.valueOf(line.qty)))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         // 4.5) 会员折扣试算
@@ -256,20 +256,20 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         BigDecimal totalMemberDiscount = totalOrderAmount.multiply(BigDecimal.ONE.subtract(userDiscountRate));
         BigDecimal amountAfterMember = totalOrderAmount.subtract(totalMemberDiscount);
 
-        // 5) 优惠券 CAS 锁定
+        // 5) 第五步：【CAS 乐观锁扣减优惠券】。现在真的要下单了，必须立刻把优惠券“锁定”标记为已使用（status 0改1）。如果数据库提示没改成功，说明可能在另一个手机上已经被用掉了，直接报错。
         BigDecimal totalCouponDiscount = BigDecimal.ZERO;
-        UserCoupon usedUc = null;
+        UserCoupon usedUserCoupon = null;
         if (userCouponId != null && userCouponId > 0) {
-            UserCoupon uc = userCouponMapper.selectById(userCouponId);
-            if (uc == null || !uc.getUserId().equals(userId)) throw new BusinessException("优惠券不存在");
-            if (uc.getStatus() != null && uc.getStatus() != 0) throw new BusinessException("优惠券已使用或已过期");
-            Coupon coupon = couponMapper.selectById(uc.getCouponId());
+            UserCoupon userCoupon = userCouponMapper.selectById(userCouponId);
+            if (userCoupon == null || !userCoupon.getUserId().equals(userId)) throw new BusinessException("优惠券不存在");
+            if (userCoupon.getStatus() != null && userCoupon.getStatus() != 0) throw new BusinessException("优惠券已使用或已过期");
+            Coupon coupon = couponMapper.selectById(userCoupon.getCouponId());
             if (coupon == null || coupon.getStatus() != 1
                     || LocalDateTime.now().isBefore(coupon.getStartTime())
                     || LocalDateTime.now().isAfter(coupon.getEndTime())) {
                 throw new BusinessException("优惠券不在有效期");
             }
-            // 门槛按商品原价总额判定（与前端及"满X元"惯例一致），折扣仍按会员折后价计算
+            // 再次校验规则：门槛按原价算，折扣基于会员折后价
             if (totalOrderAmount.compareTo(coupon.getThreshold()) < 0) {
                 throw new BusinessException("未达到优惠券门槛（满 " + coupon.getThreshold() + " 可用）");
             }
@@ -279,7 +279,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 totalCouponDiscount = amountAfterMember.multiply(BigDecimal.ONE.subtract(coupon.getAmount()));
             }
 
-            // CAS 乐观锁扣券
+            // 【并发锁】这里利用 SQL 的底层原子性（where status=0），完美避免并发场景下同一个优惠券被多笔订单同时消耗的漏洞。
             int rows = userCouponMapper.update(null, new LambdaUpdateWrapper<UserCoupon>()
                     .eq(UserCoupon::getId, userCouponId)
                     .eq(UserCoupon::getStatus, 0)
@@ -288,10 +288,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             if (rows != 1) {
                 throw new BusinessException("优惠券已被使用");
             }
-            usedUc = uc;
+            usedUserCoupon = userCoupon;
         }
 
-        // 6) 逐店创建订单
+        // 6) 第六步：最复杂的环节——【逐个商家生成独立订单，并分摊优惠金额】。
         BigDecimal totalPayAmount = totalOrderAmount.subtract(totalCouponDiscount).subtract(totalMemberDiscount);
         if (totalPayAmount.compareTo(BigDecimal.ZERO) < 0) totalPayAmount = BigDecimal.ZERO;
 
@@ -305,10 +305,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
             // 该子订单商品总价
             BigDecimal subTotalAmount = lines.stream()
-                    .map(l -> l.price.multiply(BigDecimal.valueOf(l.qty)))
+                    .map(line -> line.price.multiply(BigDecimal.valueOf(line.qty)))
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-            // 按比例分配子订单实付金额
+            // 【金额比例分摊算法】：全平台的优惠（如抵用券）到底算哪个商家的？为了财务对账清晰，必须根据当前子订单占据的总价比例，把优惠金额“摊”给每个商家的实付款里。
             BigDecimal ratio = totalOrderAmount.compareTo(BigDecimal.ZERO) > 0
                     ? subTotalAmount.divide(totalOrderAmount, 6, RoundingMode.HALF_UP)
                     : BigDecimal.ONE;
@@ -326,10 +326,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             order.setPayAmount(subPayAmount);
             order.setCouponId(userCouponId != null ? userCouponId : 0L);
             order.setStatus(0); // 待支付
-            order.setReceiverName(addr.getReceiver());
-            order.setReceiverPhone(addr.getPhone());
-            order.setReceiverAddress(addr.getProvince() + addr.getCity()
-                    + addr.getDistrict() + addr.getDetail());
+            order.setReceiverName(address.getReceiver());
+            order.setReceiverPhone(address.getPhone());
+            order.setReceiverAddress(address.getProvince() + address.getCity()
+                    + address.getDistrict() + address.getDetail());
 
             if (remark != null && !remark.isEmpty()) {
                 order.setRemark(remark);
@@ -338,7 +338,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             orderIds.add(order.getId());
             orderNos.add(orderNo);
 
-            // 发延迟消息：到期(默认30min)后若仍未支付则自动取消（MQ 主触发；定时扫描兜底）
+            // 【延迟取消机制】：如果用户下单了但一直不付钱，不能一直占着库存。这里朝 RabbitMQ 的延迟队列发一条消息，如果 30 分钟后还没付款，消息队列会自动通知系统把这个订单取消掉（同时退还库存）。
             try {
                 rabbitTemplate.convertAndSend(RabbitMQConfig.ORDER_DELAY_EXCHANGE,
                         RabbitMQConfig.ORDER_DELAY_ROUTING_KEY, String.valueOf(order.getId()));
@@ -363,21 +363,21 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                         : BigDecimal.ONE;
                 BigDecimal lineRealPay = subPayAmount.multiply(lineRatio).setScale(2, RoundingMode.HALF_UP);
 
-                OrderItem oi = new OrderItem();
-                oi.setOrderId(order.getId());
-                oi.setProductId(line.product.getId());
-                oi.setSkuId(line.skuId != null ? line.skuId : 0L);
-                oi.setShopId(shopId);
-                oi.setProductName(line.product.getName());
-                oi.setProductImage(line.product.getMainImage());
-                oi.setSpecName(line.specName);
-                oi.setPrice(line.price);
-                oi.setQuantity(line.qty);
-                oi.setSubtotal(lineSubtotal);
-                oi.setRealPayAmount(lineRealPay);
-                orderItemMapper.insert(oi);
+                OrderItem orderItem = new OrderItem();
+                orderItem.setOrderId(order.getId());
+                orderItem.setProductId(line.product.getId());
+                orderItem.setSkuId(line.skuId != null ? line.skuId : 0L);
+                orderItem.setShopId(shopId);
+                orderItem.setProductName(line.product.getName());
+                orderItem.setProductImage(line.product.getMainImage());
+                orderItem.setSpecName(line.specName);
+                orderItem.setPrice(line.price);
+                orderItem.setQuantity(line.qty);
+                orderItem.setSubtotal(lineSubtotal);
+                orderItem.setRealPayAmount(lineRealPay);
+                orderItemMapper.insert(orderItem);
 
-                // 库存扣减（原子：WHERE stock>=qty，影响行数!=1 说明并发下已被抢空，抛错回滚整单，防超卖）
+                // 【并发库存防超卖锁】：整个电商最容易出事故的地方！直接在数据库里利用 stock = stock - qty AND stock >= qty 这种原子语句来扣减。即使十万人同时秒杀，一旦库扣成负数 SQL 会直接拦截并返回影响行数为 0，此时代码抛异常回滚整笔大订单，绝不超卖！
                 int stockRows;
                 if (line.skuId != null && line.skuId != 0) {
                     stockRows = productSkuMapper.update(null, new LambdaUpdateWrapper<ProductSku>()
@@ -403,9 +403,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             }
 
             // 回填 user_coupon 的 orderId
-            if (usedUc != null) {
+            if (usedUserCoupon != null) {
                 userCouponMapper.update(null, new LambdaUpdateWrapper<UserCoupon>()
-                        .eq(UserCoupon::getId, usedUc.getId())
+                        .eq(UserCoupon::getId, usedUserCoupon.getId())
                         .set(UserCoupon::getOrderId, order.getId()));
             }
         }
@@ -435,13 +435,13 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Override
     public PageResult<Map<String, Object>> myOrders(int current, int size, Integer status) {
         Long userId = requireUserId();
-        LambdaQueryWrapper<Order> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(Order::getUserId, userId);
+        LambdaQueryWrapper<Order> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(Order::getUserId, userId);
         if (status != null) {
-            wrapper.eq(Order::getStatus, status);
+            queryWrapper.eq(Order::getStatus, status);
         }
-        wrapper.orderByDesc(Order::getCreateTime);
-        Page<Order> page = this.page(new Page<>(current, size), wrapper);
+        queryWrapper.orderByDesc(Order::getCreateTime);
+        Page<Order> page = this.page(new Page<>(current, size), queryWrapper);
         return buildOrderPageResult(page);
     }
 
@@ -888,6 +888,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         rf.put("auditTime", refund.getAuditTime());
         rf.put("returnCourierCompany", refund.getReturnCourierCompany());
         rf.put("returnTrackingNumber", refund.getReturnTrackingNumber());
+        rf.put("returnTime", refund.getReturnTime());
         vo.put("refund", rf);
     }
 

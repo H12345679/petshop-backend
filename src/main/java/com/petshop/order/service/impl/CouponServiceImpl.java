@@ -36,13 +36,14 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
     @Override
     public List<Coupon> listAvailable() {
         LocalDateTime now = LocalDateTime.now();
-        LambdaQueryWrapper<Coupon> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(Coupon::getStatus, 1)
+        LambdaQueryWrapper<Coupon> queryWrapper = new LambdaQueryWrapper<>();
+        // 查询条件：1) 状态为上架(1) 2) 当前时间在活动的开始和结束时间之间 3) 剩余库存大于 0
+        queryWrapper.eq(Coupon::getStatus, 1)
                .le(Coupon::getStartTime, now)
                .ge(Coupon::getEndTime, now)
                .gt(Coupon::getRemain, 0)
                .orderByDesc(Coupon::getCreateTime);
-        return this.list(wrapper);
+        return this.list(queryWrapper);
     }
 
     @Override
@@ -50,42 +51,49 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
     public void receive(Long couponId) {
         Long userId = requireUserId();
 
-        // 1) 校验优惠券存在且有效
+        // 1) 校验目标优惠券是否存在，以及是否处于有效的上架状态
         Coupon coupon = this.getById(couponId);
         if (coupon == null || coupon.getStatus() == null || coupon.getStatus() != 1) {
             throw new BusinessException("优惠券不存在或已下架");
         }
+        
+        // 校验领取时间是否在优惠券规定的有效期内
         LocalDateTime now = LocalDateTime.now();
         if (now.isBefore(coupon.getStartTime()) || now.isAfter(coupon.getEndTime())) {
-            throw new BusinessException("不在优惠券有效期内");
+            throw new BusinessException("当前不在优惠券的领取有效期内");
         }
+        
+        // 校验是否还有剩余库存
         if (coupon.getRemain() == null || coupon.getRemain() <= 0) {
-            throw new BusinessException("优惠券已被领完");
+            throw new BusinessException("来晚了，优惠券已被领完");
         }
 
-        // 2) 检查用户是否已领过（防重复）
-        LambdaQueryWrapper<UserCoupon> ucWrapper = new LambdaQueryWrapper<>();
-        ucWrapper.eq(UserCoupon::getUserId, userId)
-                 .eq(UserCoupon::getCouponId, couponId);
-        if (userCouponMapper.selectCount(ucWrapper) > 0) {
-            throw new BusinessException("您已领取过该优惠券");
+        // 2) 检查当前用户是否已经领取过该优惠券（防止同一个人重复领取）
+        LambdaQueryWrapper<UserCoupon> duplicateCheckWrapper = new LambdaQueryWrapper<>();
+        duplicateCheckWrapper.eq(UserCoupon::getUserId, userId)
+                             .eq(UserCoupon::getCouponId, couponId);
+        if (userCouponMapper.selectCount(duplicateCheckWrapper) > 0) {
+            throw new BusinessException("您已经领取过该优惠券了");
         }
 
-        // 3) CAS 扣减库存（乐观锁，防超发）
-        boolean decr = this.update(new LambdaUpdateWrapper<Coupon>()
+        // 3) 使用 CAS（比较并交换）乐观锁机制安全扣减库存。
+        // 通过 SQL 底层的原子性（remain = remain - 1 且限定 remain > 0），
+        // 完美防止高并发抢券时出现“超发”的严重 Bug。
+        boolean isStockDecremented = this.update(new LambdaUpdateWrapper<Coupon>()
                 .eq(Coupon::getId, couponId)
                 .gt(Coupon::getRemain, 0)
                 .setSql("remain = remain - 1"));
-        if (!decr) {
-            throw new BusinessException("优惠券已被领完");
+                
+        if (!isStockDecremented) {
+            throw new BusinessException("来晚了，优惠券已被领完");
         }
 
-        // 4) 给用户发券
-        UserCoupon uc = new UserCoupon();
-        uc.setUserId(userId);
-        uc.setCouponId(couponId);
-        uc.setStatus(0); // 0=未使用
-        userCouponMapper.insert(uc);
+        // 4) 库存扣减成功后，正式为该用户生成一张对应的优惠券资产
+        UserCoupon userCoupon = new UserCoupon();
+        userCoupon.setUserId(userId);
+        userCoupon.setCouponId(couponId);
+        userCoupon.setStatus(0); // 初始状态标记为 0 (未使用)
+        userCouponMapper.insert(userCoupon);
     }
 
     @Override
@@ -93,66 +101,74 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
     public List<Map<String, Object>> listMyCoupons(Integer status) {
         Long userId = requireUserId();
 
-        // 惰性过期归类：把该用户"未使用(0)但券已过期"的记录置为已过期(2)，
-        // 使"已过期"筛选能查到、且过期券不再错误停留在"未使用"里。
+        // 惰性过期归类机制：
+        // 并不是依靠定时任务去扫表，而是在用户主动查询优惠券列表时，
+        // 顺手把该用户名下“仍处于未使用状态(0)”但“实际时间已过截止日期”的优惠券，
+        // 批量将状态更新为已过期(2)。这样既节省了服务器后台资源，又能保证查询结果绝对准确。
         userCouponMapper.update(null, new LambdaUpdateWrapper<UserCoupon>()
                 .eq(UserCoupon::getUserId, userId)
                 .eq(UserCoupon::getStatus, 0)
                 .inSql(UserCoupon::getCouponId, "SELECT id FROM coupon WHERE end_time < NOW()")
                 .set(UserCoupon::getStatus, 2));
 
-        LambdaQueryWrapper<UserCoupon> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(UserCoupon::getUserId, userId);
+        // 根据传入的 status 条件查询用户拥有的优惠券关联记录
+        LambdaQueryWrapper<UserCoupon> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(UserCoupon::getUserId, userId);
         if (status != null) {
-            wrapper.eq(UserCoupon::getStatus, status);
+            queryWrapper.eq(UserCoupon::getStatus, status);
         }
-        wrapper.orderByDesc(UserCoupon::getCreateTime);
-        List<UserCoupon> list = userCouponMapper.selectList(wrapper);
+        queryWrapper.orderByDesc(UserCoupon::getCreateTime);
+        List<UserCoupon> userCoupons = userCouponMapper.selectList(queryWrapper);
 
-        // 关联券定义明细返回，避免前端拿不到 name/type/amount/threshold/endTime 而显示 NaN折/空
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (UserCoupon uc : list) {
-            Map<String, Object> vo = new LinkedHashMap<>();
-            vo.put("id", uc.getId());
-            vo.put("couponId", uc.getCouponId());
-            vo.put("status", uc.getStatus());
-            vo.put("usedTime", uc.getUsedTime());
-            vo.put("orderId", uc.getOrderId());
-            vo.put("createTime", uc.getCreateTime());
+        // 遍历用户的领券记录，去 coupon 主表关联出详细的优惠规则（名称、类型、金额等），
+        // 包装成 Map 列表返回给前端展示，避免前端因为拿不到明细数据而显示异常（如 NaN 折）。
+        List<Map<String, Object>> couponDetailsList = new ArrayList<>();
+        for (UserCoupon userCoupon : userCoupons) {
+            Map<String, Object> couponDetail = new LinkedHashMap<>();
+            couponDetail.put("id", userCoupon.getId());
+            couponDetail.put("couponId", userCoupon.getCouponId());
+            couponDetail.put("status", userCoupon.getStatus());
+            couponDetail.put("usedTime", userCoupon.getUsedTime());
+            couponDetail.put("orderId", userCoupon.getOrderId());
+            couponDetail.put("createTime", userCoupon.getCreateTime());
 
-            Coupon coupon = this.getById(uc.getCouponId());
+            // 查出原始的优惠券定义
+            Coupon coupon = this.getById(userCoupon.getCouponId());
             if (coupon != null) {
-                vo.put("name", coupon.getName());
-                vo.put("type", coupon.getType());
-                vo.put("amount", coupon.getAmount());
-                vo.put("threshold", coupon.getThreshold());
-                vo.put("total", coupon.getTotal());
-                vo.put("remain", coupon.getRemain());
-                vo.put("startTime", coupon.getStartTime());
-                vo.put("endTime", coupon.getEndTime());
+                couponDetail.put("name", coupon.getName());
+                couponDetail.put("type", coupon.getType());
+                couponDetail.put("amount", coupon.getAmount());
+                couponDetail.put("threshold", coupon.getThreshold());
+                couponDetail.put("total", coupon.getTotal());
+                couponDetail.put("remain", coupon.getRemain());
+                couponDetail.put("startTime", coupon.getStartTime());
+                couponDetail.put("endTime", coupon.getEndTime());
             }
-            result.add(vo);
+            couponDetailsList.add(couponDetail);
         }
-        return result;
+        return couponDetailsList;
     }
 
     // ==================== 后台 ====================
 
     @Override
     public void createCoupon(Coupon coupon) {
+        // 限制优惠券最大发行量，防止数字过大导致后续计算或库存扣减溢出
         if (coupon.getTotal() != null && coupon.getTotal() > 100000) {
             throw new BusinessException("发行总量最大不能超过 100,000 张");
         }
+        // 如果是折扣券(type=2)，折扣率不能超过 0.99 (即 9.9 折)
         if (coupon.getType() != null && coupon.getType() == 2) {
             if (coupon.getAmount() == null || coupon.getAmount().compareTo(new java.math.BigDecimal("0.99")) > 0) {
                 throw new BusinessException("折扣率不能大于 0.99");
             }
         }
         coupon.setId(null);
-        // remain 初始等于 total
+        // 新建优惠券时，初始的剩余库存(remain)默认等于发行总量(total)
         if (coupon.getRemain() == null) {
             coupon.setRemain(coupon.getTotal());
         }
+        // 默认状态为 1 (上架)
         if (coupon.getStatus() == null) {
             coupon.setStatus(1);
         }
@@ -169,8 +185,9 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
                 throw new BusinessException("折扣率不能大于 0.99");
             }
         }
-        Coupon exist = this.getById(id);
-        if (exist == null) {
+        
+        Coupon existingCoupon = this.getById(id);
+        if (existingCoupon == null) {
             throw new BusinessException(ResultCode.NOT_FOUND);
         }
         coupon.setId(id);
@@ -179,42 +196,43 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
 
     @Override
     public Page<Coupon> managePage(int current, int size, String name, Integer type, Integer status) {
-        LambdaQueryWrapper<Coupon> wrapper = new LambdaQueryWrapper<>();
+        LambdaQueryWrapper<Coupon> queryWrapper = new LambdaQueryWrapper<>();
         if (name != null && !name.isEmpty()) {
-            wrapper.like(Coupon::getName, name);
+            queryWrapper.like(Coupon::getName, name);
         }
         if (type != null) {
-            wrapper.eq(Coupon::getType, type);
+            queryWrapper.eq(Coupon::getType, type);
         }
         if (status != null) {
-            wrapper.eq(Coupon::getStatus, status);
+            queryWrapper.eq(Coupon::getStatus, status);
         }
-        wrapper.orderByDesc(Coupon::getCreateTime);
-        return this.page(new Page<>(current, size), wrapper);
+        queryWrapper.orderByDesc(Coupon::getCreateTime);
+        return this.page(new Page<>(current, size), queryWrapper);
     }
 
     @Override
     @Transactional
     public void deleteCoupon(Long id) {
-        Coupon exist = this.getById(id);
-        if (exist == null) {
+        Coupon existingCoupon = this.getById(id);
+        if (existingCoupon == null) {
             throw new BusinessException(ResultCode.NOT_FOUND);
         }
-        // 删除关联的用户优惠券记录
-        LambdaQueryWrapper<UserCoupon> ucWrapper = new LambdaQueryWrapper<>();
-        ucWrapper.eq(UserCoupon::getCouponId, id);
-        userCouponMapper.delete(ucWrapper);
-        // 删除优惠券本身
+        // 级联删除：先彻底清空用户已经领取的该类优惠券记录
+        LambdaQueryWrapper<UserCoupon> userCouponQueryWrapper = new LambdaQueryWrapper<>();
+        userCouponQueryWrapper.eq(UserCoupon::getCouponId, id);
+        userCouponMapper.delete(userCouponQueryWrapper);
+        
+        // 最后删除主表的优惠券定义
         this.removeById(id);
     }
 
     // ========== 内部 ==========
 
     private Long requireUserId() {
-        Long uid = UserContext.getUserId();
-        if (uid == null) {
+        Long userId = UserContext.getUserId();
+        if (userId == null) {
             throw new BusinessException(ResultCode.UNAUTHORIZED);
         }
-        return uid;
+        return userId;
     }
 }
