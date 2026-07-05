@@ -189,14 +189,24 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
         List<Object[]> batchArgs = new ArrayList<>();
         List<Long> allItems = new ArrayList<>(itemUserMap.keySet());
 
+        // 0. 统一查询真正的购买记录（behavior_type = 4）
+        Map<Long, Set<Long>> purchasedMap = new HashMap<>();
+        List<Map<String, Object>> buyRows = jdbcTemplate.queryForList("SELECT user_id, product_id FROM user_behavior WHERE behavior_type = 4 AND deleted = 0");
+        for (Map<String, Object> row : buyRows) {
+            Long userId = ((Number) row.get("user_id")).longValue();
+            Long itemId = ((Number) row.get("product_id")).longValue();
+            purchasedMap.computeIfAbsent(userId, k -> new HashSet<>()).add(itemId);
+        }
+
         for (Long userId : userItemMap.keySet()) {
             Map<Long, Double> history = userItemMap.get(userId);
+            Set<Long> purchasedSet = purchasedMap.getOrDefault(userId, Collections.emptySet());
 
             // 收集该用户所有候选商品的预测得分
             List<Map.Entry<Long, Double>> candidates = new ArrayList<>();
             for (Long itemId : allItems) {
-                if (history.containsKey(itemId)) {
-                    continue; // 已经买过的不预测
+                if (purchasedSet.contains(itemId)) {
+                    continue; // 只有真正已购买过的商品才排除，不再预测与推荐
                 }
 
                 // ICF 预测得分
@@ -229,6 +239,13 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
                 if (ucfSimSum > 0) ucfScore /= ucfSimSum;
 
                 double finalScore = 0.6 * icfScore + 0.4 * ucfScore;
+
+                // 曾有交互（浏览/收藏/加购）但未购买的商品，进行兴趣加权奖励（乘法系数 1.2）
+                Double existingScore = history.get(itemId);
+                if (existingScore != null && existingScore > 0) {
+                    finalScore *= 1.2;
+                }
+
                 if (finalScore > 0.1) {
                     candidates.add(new AbstractMap.SimpleEntry<>(itemId, finalScore));
                 }

@@ -14,6 +14,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 
 @RestController
 @RequestMapping("/api/recommend/test")
@@ -38,6 +39,7 @@ public class MockDataController {
         List<Long> dogItems = Arrays.asList(1007L, 1011L, 1013L, 1021L, 1023L, 1024L, 1025L, 1026L, 1029L, 1030L, 1034L);
 
         // 2. 清理旧 Mock 数据
+        jdbcTemplate.update("DELETE FROM user_behavior WHERE user_id >= 1000");
         jdbcTemplate.update("DELETE FROM user_item_score WHERE user_id >= 1000");
         jdbcTemplate.update("DELETE FROM user WHERE id >= 1000");
 
@@ -61,28 +63,44 @@ public class MockDataController {
             Collections.shuffle(preferredItems);
             Collections.shuffle(otherItems);
 
-            // 挑 4-7 个偏好商品，给高分(3-5)
+            // 挑 4-7 个偏好商品，给高分(3-5)，并同步构造真实的虚拟行为日志
             int prefCount = 4 + random.nextInt(4);
             for (int j = 0; j < prefCount && j < preferredItems.size(); j++) {
+                Long itemId = preferredItems.get(j);
                 double score = 3.0 + random.nextInt(3); // 3, 4, 5
+                
+                // 真实模拟：偏好商品中，第1~2个模拟已购买(4)；其余模拟收藏(2)或加购(3)
+                int behaviorType = (j == 0 || (j == 1 && random.nextBoolean())) ? 4 : (score >= 4.0 ? 3 : 2);
+                jdbcTemplate.update(
+                    "INSERT INTO user_behavior (id, user_id, product_id, behavior_type, create_time, update_time, deleted) VALUES (?, ?, ?, ?, NOW(), NOW(), 0)",
+                    IdWorker.getId(), userId, itemId, behaviorType
+                );
+
                 jdbcTemplate.update(
                     "INSERT INTO user_item_score (id, user_id, product_id, score, update_time) VALUES (?, ?, ?, ?, NOW())",
-                    Long.valueOf(userId + "00" + j), userId, preferredItems.get(j), score
+                    Long.valueOf(userId + "00" + j), userId, itemId, score
                 );
             }
 
-            // 挑 0-2 个非偏好商品，给低分(1-2)
+            // 挑 0-2 个非偏好商品，给低分(1-2)，同步构造浏览行为(1)
             int otherCount = random.nextInt(3);
             for (int j = 0; j < otherCount && j < otherItems.size(); j++) {
+                Long itemId = otherItems.get(j);
                 double score = 1.0 + random.nextInt(2); // 1, 2
+                
+                jdbcTemplate.update(
+                    "INSERT INTO user_behavior (id, user_id, product_id, behavior_type, create_time, update_time, deleted) VALUES (?, ?, ?, ?, NOW(), NOW(), 0)",
+                    IdWorker.getId(), userId, itemId, 1
+                );
+
                 jdbcTemplate.update(
                     "INSERT INTO user_item_score (id, user_id, product_id, score, update_time) VALUES (?, ?, ?, ?, NOW())",
-                    Long.valueOf(userId + "99" + j), userId, otherItems.get(j), score
+                    Long.valueOf(userId + "99" + j), userId, itemId, score
                 );
             }
         }
 
-        return Result.success("成功生成 40 个虚拟买家及对应的 CF 评分矩阵数据！");
+        return Result.success("成功生成 40 个虚拟买家及对应的行为日志与 CF 评分矩阵数据！");
     }
 
     @GetMapping("/run-cf")
