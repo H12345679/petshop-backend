@@ -111,64 +111,28 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     public Map<String, Object> preSettle(List<Map<String, Object>> items, Long userCouponId, Long addressId) {
         Long userId = requireUserId();
         if (items == null || items.isEmpty()) {
-            throw new BusinessException("购买项不能为空");
+            throw new BusinessException(“购买项不能为空”);
         }
 
-        // 1) 第一步：把用户打算买的商品拉出来，挨个算钱。如果有 SKU（例如“红色 XL码”），就拿 SKU 的价格；如果没有，就拿基础款的价格。汇总得出商品总原价。
-        BigDecimal totalAmount = BigDecimal.ZERO;
-        for (Map<String, Object> item : items) {
-            Long productId = toLong(item.get("productId"));
-            Long skuId = toLong(item.get("skuId"));
-            int qty = toInt(item.get("quantity"), 1);
+        BigDecimal totalAmount = calculateItemsTotal(items);
 
-            Product product = getValidProduct(productId);
-            BigDecimal price=BigDecimal.ZERO;
-            if (skuId != null && skuId != 0) {
-                ProductSku sku = getValidSku(skuId, productId);
-                price = sku.getPrice();
-            } else {
-                price = product.getPrice();
-            }
-            if (price == null) {
-                throw new BusinessException("商品价格异常");
-            }
-            totalAmount = totalAmount.add(price.multiply(BigDecimal.valueOf(qty)));
-        }
-
-        // 2) 第二步：算完原价后，看看用户是不是尊贵的会员。按 VIP 等级先打个基础折扣，得出【会员折扣金额】和【会员折后总价】。
         BigDecimal userDiscountRate = membershipLevelService.getCurrentUserDiscount();
         BigDecimal memberDiscount = totalAmount.multiply(BigDecimal.ONE.subtract(userDiscountRate));
         BigDecimal amountAfterMember = totalAmount.subtract(memberDiscount);
 
-        // 3) 第三步：处理额外用的优惠券。得严格检查这张券：是不是本人的？是不是还没用过？是不是还在有效期？
         BigDecimal couponDiscount = BigDecimal.ZERO;
         Long effectiveUserCouponId = 0L;
-        if (userCouponId != null && userCouponId > 0) {
-            UserCoupon userCoupon = userCouponMapper.selectById(userCouponId);
-            if (userCoupon == null || !userCoupon.getUserId().equals(userId)) {
-                throw new BusinessException("优惠券不存在");
+        Coupon validCoupon = validateUserCoupon(userCouponId, userId, totalAmount);
+        if (validCoupon != null) {
+            if (validCoupon.getType() == 1) {
+                couponDiscount = validCoupon.getAmount();
+            } else if (validCoupon.getType() == 2) {
+                couponDiscount = amountAfterMember.multiply(
+                        BigDecimal.ONE.subtract(validCoupon.getAmount()));
             }
-            if (userCoupon.getStatus() != null && userCoupon.getStatus() != 0) {
-                throw new BusinessException("优惠券不可用");
-            }
-            Coupon coupon = couponMapper.selectById(userCoupon.getCouponId());
-            if (coupon != null && coupon.getStatus() == 1
-                    && !LocalDateTime.now(ZoneId.systemDefault()).isBefore(coupon.getStartTime())
-                    && !LocalDateTime.now(ZoneId.systemDefault()).isAfter(coupon.getEndTime())
-                    && totalAmount.compareTo(coupon.getThreshold()) >= 0) {
-                if (coupon.getType() == 1) {
-                    couponDiscount = coupon.getAmount();
-                } else if (coupon.getType() == 2) {
-                    couponDiscount = amountAfterMember.multiply(
-                            BigDecimal.ONE.subtract(coupon.getAmount()));
-                }
-                effectiveUserCouponId = userCouponId;
-            }
+            effectiveUserCouponId = userCouponId;
         }
 
-        // memberDiscount 已在上面计算
-
-        // 4) 第四步：算算到底帮用户省了多少钱（会员折扣 + 优惠券），最后实付还得掏多少钱，把明细打包发给前端用于展示。
         BigDecimal discountAmount = memberDiscount.add(couponDiscount);
         BigDecimal payAmount = totalAmount.subtract(discountAmount);
         if (payAmount.compareTo(BigDecimal.ZERO) < 0) payAmount = BigDecimal.ZERO;
@@ -176,11 +140,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         Map<String, Object> result = new LinkedHashMap<>();
         result.put(TOTAL_AMOUNT, totalAmount);
         result.put(DISCOUNT_AMOUNT, discountAmount);
-        result.put("memberDiscount", memberDiscount);
-        result.put("couponDiscount", couponDiscount);
+        result.put(“memberDiscount”, memberDiscount);
+        result.put(“couponDiscount”, couponDiscount);
         result.put(PAY_AMOUNT, payAmount);
         result.put(COUPON_ID, effectiveUserCouponId);
-        result.put("addressId", addressId);
+        result.put(“addressId”, addressId);
         return result;
     }
 
@@ -188,247 +152,51 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     @Override
     @Transactional
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings(“unchecked”)
     public Map<String, Object> createOrder(String requestId, Long userCouponId, Long addressId,
                                            List<Map<String, Object>> items, String remark) {
         Long userId = requireUserId();
         if (items == null || items.isEmpty()) {
-            throw new BusinessException("购买项不能为空");
+            throw new BusinessException(“购买项不能为空”);
         }
 
-        // 0) 第零步：【幂等防重机制】。如果用户手抖连点了两下支付，前端会带过来一个独一无二的 requestId，我们通过 Redis 拦截掉第二次重复的请求，防止生成双份订单。
-        if (requestId != null && !requestId.isEmpty()) {
-            String redisKey = REDIS_REQUEST_ID_PREFIX + requestId;
-            Object cached = redisUtil.get(redisKey);
-            if (cached != null) {
-                try {
-                    return OBJECT_MAPPER.readValue(cached.toString(), LinkedHashMap.class);
-                } catch (JsonProcessingException e) {
-                    throw new BusinessException("订单幂等缓存异常");
-                }
-            }
-        }
+        Map<String, Object> cached = checkIdempotency(requestId);
+        if (cached != null) return cached;
 
-        // 1) 第一步：检查收货地址是否存在以及是否属于当前用户。
-        Long validAddressId = validateAddressId(addressId, userId);
-        Address address = addressMapper.selectById(validAddressId);
+        Address address = addressMapper.selectById(validateAddressId(addressId, userId));
 
-        // 2) 第二步：【非常关键的核对】挨个检查你想买的商品状态、价格对不对，并且提前检查【库存够不够】。这里如果库存不够就会直接拦截，必须在后续复杂的算账之前做完。
-        List<ItemLine> itemLines = new ArrayList<>();
-        for (Map<String, Object> item : items) {
-            Long productId = toLong(item.get("productId"));
-            Long skuId = toLong(item.get("skuId"));
-            int qty = toInt(item.get("quantity"), 1);
-            if (qty <= 0) throw new BusinessException("购买数量必须大于0");
+        List<ItemLine> itemLines = buildItemLines(items);
 
-            Product product = getValidProduct(productId);
-            if (product.getShopId() == null) throw new BusinessException("商品未绑定店铺");
-
-            BigDecimal price;
-            int availableStock;
-            String specName = "";
-            if (skuId != null && skuId != 0) {
-                ProductSku sku = getValidSku(skuId, productId);
-                price = sku.getPrice();
-                availableStock = sku.getStock() == null ? 0 : sku.getStock();
-                specName = sku.getSpecName() != null ? sku.getSpecName() : "";
-            } else {
-                price = product.getPrice();
-                availableStock = product.getStock() == null ? 0 : product.getStock();
-            }
-            if (price == null) throw new BusinessException("商品价格异常");
-            if (availableStock < qty) {
-                throw new BusinessException(product.getName() + " 库存不足（剩余 " + availableStock + "）");
-            }
-
-            itemLines.add(new ItemLine(product, skuId, price, qty, product.getShopId(), specName));
-        }
-
-        // 3) 第三步：【跨店购物车拆单核心逻辑】。由于是平台模式，用户勾选的商品可能属于不同的商家。所以我们按 shopId 把商品分门别类，一会儿要生成多个独立的子订单。
         Map<Long, List<ItemLine>> grouped = itemLines.stream()
                 .collect(Collectors.groupingBy(ItemLine::getShopId, LinkedHashMap::new, Collectors.toList()));
 
-        // 4) 总金额
         BigDecimal totalOrderAmount = itemLines.stream()
                 .map(line -> line.price.multiply(BigDecimal.valueOf(line.qty)))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        // 4.5) 会员折扣试算
-        java.math.BigDecimal userDiscountRate = membershipLevelService.getCurrentUserDiscount();
+        BigDecimal userDiscountRate = membershipLevelService.getCurrentUserDiscount();
         BigDecimal totalMemberDiscount = totalOrderAmount.multiply(BigDecimal.ONE.subtract(userDiscountRate));
         BigDecimal amountAfterMember = totalOrderAmount.subtract(totalMemberDiscount);
 
-        // 5) 第五步：【CAS 乐观锁扣减优惠券】。现在真的要下单了，必须立刻把优惠券“锁定”标记为已使用（status 0改1）。如果数据库提示没改成功，说明可能在另一个手机上已经被用掉了，直接报错。
-        BigDecimal totalCouponDiscount = BigDecimal.ZERO;
-        UserCoupon usedUserCoupon = null;
-        if (userCouponId != null && userCouponId > 0) {
-            UserCoupon userCoupon = userCouponMapper.selectById(userCouponId);
-            if (userCoupon == null || !userCoupon.getUserId().equals(userId)) throw new BusinessException("优惠券不存在");
-            if (userCoupon.getStatus() != null && userCoupon.getStatus() != 0) throw new BusinessException("优惠券已使用或已过期");
-            Coupon coupon = couponMapper.selectById(userCoupon.getCouponId());
-            if (coupon == null || coupon.getStatus() != 1
-                    || LocalDateTime.now(ZoneId.systemDefault()).isBefore(coupon.getStartTime())
-                    || LocalDateTime.now(ZoneId.systemDefault()).isAfter(coupon.getEndTime())) {
-                throw new BusinessException("优惠券不在有效期");
-            }
-            // 再次校验规则：门槛按原价算，折扣基于会员折后价
-            if (totalOrderAmount.compareTo(coupon.getThreshold()) < 0) {
-                throw new BusinessException("未达到优惠券门槛（满 " + coupon.getThreshold() + " 可用）");
-            }
-            if (coupon.getType() == 1) {
-                totalCouponDiscount = coupon.getAmount();
-            } else if (coupon.getType() == 2) {
-                totalCouponDiscount = amountAfterMember.multiply(BigDecimal.ONE.subtract(coupon.getAmount()));
-            }
+        CouponLockResult couponResult = lockCoupon(userCouponId, userId, totalOrderAmount, amountAfterMember);
 
-            // 【并发锁】这里利用 SQL 的底层原子性（where status=0），完美避免并发场景下同一个优惠券被多笔订单同时消耗的漏洞。
-            int rows = userCouponMapper.update(null, new LambdaUpdateWrapper<UserCoupon>()
-                    .eq(UserCoupon::getId, userCouponId)
-                    .eq(UserCoupon::getStatus, 0)
-                    .set(UserCoupon::getStatus, 1)
-                    .set(UserCoupon::getUsedTime, LocalDateTime.now(ZoneId.systemDefault())));
-            if (rows != 1) {
-                throw new BusinessException("优惠券已被使用");
-            }
-            usedUserCoupon = userCoupon;
-        }
-
-        // 6) 第六步：最复杂的环节——【逐个商家生成独立订单，并分摊优惠金额】。
-        BigDecimal totalPayAmount = totalOrderAmount.subtract(totalCouponDiscount).subtract(totalMemberDiscount);
+        BigDecimal totalPayAmount = totalOrderAmount.subtract(couponResult.discount).subtract(totalMemberDiscount);
         if (totalPayAmount.compareTo(BigDecimal.ZERO) < 0) totalPayAmount = BigDecimal.ZERO;
 
-        String today = LocalDate.now(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        String today = LocalDate.now(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern(“yyyyMMdd”));
         List<Long> orderIds = new ArrayList<>();
         List<String> orderNos = new ArrayList<>();
 
         for (Map.Entry<Long, List<ItemLine>> entry : grouped.entrySet()) {
-            Long shopId = entry.getKey();
-            List<ItemLine> lines = entry.getValue();
-
-            // 该子订单商品总价
-            BigDecimal subTotalAmount = lines.stream()
-                    .map(line -> line.price.multiply(BigDecimal.valueOf(line.qty)))
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-            // 【金额比例分摊算法】：全平台的优惠（如抵用券）到底算哪个商家的？为了财务对账清晰，必须根据当前子订单占据的总价比例，把优惠金额“摊”给每个商家的实付款里。
-            BigDecimal ratio = totalOrderAmount.compareTo(BigDecimal.ZERO) > 0
-                    ? subTotalAmount.divide(totalOrderAmount, 6, RoundingMode.HALF_UP)
-                    : BigDecimal.ONE;
-            BigDecimal subPayAmount = totalPayAmount.multiply(ratio).setScale(2, RoundingMode.HALF_UP);
-
-            // 生成订单号
-            String orderNo = nextOrderNo(today);
-
-            Order order = new Order();
-            order.setOrderNo(orderNo);
-            order.setUserId(userId);
-            order.setShopId(shopId);
-            order.setTotalAmount(subTotalAmount);
-            order.setDiscountAmount(subTotalAmount.subtract(subPayAmount));
-            order.setPayAmount(subPayAmount);
-            order.setCouponId(userCouponId != null ? userCouponId : 0L);
-            order.setStatus(0); // 待支付
-            order.setReceiverName(address.getReceiver());
-            order.setReceiverPhone(address.getPhone());
-            order.setReceiverAddress(address.getProvince() + address.getCity()
-                    + address.getDistrict() + address.getDetail());
-
-            if (remark != null && !remark.isEmpty()) {
-                order.setRemark(remark);
-            }
-            this.save(order);
-            orderIds.add(order.getId());
-            orderNos.add(orderNo);
-
-            // 【延迟取消机制】：如果用户下单了但一直不付钱，不能一直占着库存。这里朝 RabbitMQ 的延迟队列发一条消息，如果 30 分钟后还没付款，消息队列会自动通知系统把这个订单取消掉（同时退还库存）。
-            try {
-                rabbitTemplate.convertAndSend(RabbitMQConfig.ORDER_DELAY_EXCHANGE,
-                        RabbitMQConfig.ORDER_DELAY_ROUTING_KEY, String.valueOf(order.getId()));
-            } catch (Exception ignore) {
-                // MQ 不可用不影响下单，超时由定时扫描兜底
-            }
-
-            // 状态日志
-            OrderStatusLog log = new OrderStatusLog();
-            log.setOrderId(order.getId());
-            log.setToStatus(0);
-            log.setOperatorId(userId);
-            log.setOperatorRole("USER");
-            log.setRemark("用户下单");
-            orderStatusLogMapper.insert(log);
-
-            // 明细 + 优惠分摊 + 库存扣减
-            for (ItemLine line : lines) {
-                BigDecimal lineSubtotal = line.price.multiply(BigDecimal.valueOf(line.qty));
-                BigDecimal lineRatio = subTotalAmount.compareTo(BigDecimal.ZERO) > 0
-                        ? lineSubtotal.divide(subTotalAmount, 6, RoundingMode.HALF_UP)
-                        : BigDecimal.ONE;
-                BigDecimal lineRealPay = subPayAmount.multiply(lineRatio).setScale(2, RoundingMode.HALF_UP);
-
-                OrderItem orderItem = new OrderItem();
-                orderItem.setOrderId(order.getId());
-                orderItem.setProductId(line.product.getId());
-                orderItem.setSkuId(line.skuId != null ? line.skuId : 0L);
-                orderItem.setShopId(shopId);
-                orderItem.setProductName(line.product.getName());
-                orderItem.setProductImage(line.product.getMainImage());
-                orderItem.setSpecName(line.specName);
-                orderItem.setPrice(line.price);
-                orderItem.setQuantity(line.qty);
-                orderItem.setSubtotal(lineSubtotal);
-                orderItem.setRealPayAmount(lineRealPay);
-                orderItemMapper.insert(orderItem);
-
-                // 【并发库存防超卖锁】：整个电商最容易出事故的地方！直接在数据库里利用 stock = stock - qty AND stock >= qty 这种原子语句来扣减。即使十万人同时秒杀，一旦库扣成负数 SQL 会直接拦截并返回影响行数为 0，此时代码抛异常回滚整笔大订单，绝不超卖！
-                int stockRows;
-                if (line.skuId != null && line.skuId != 0) {
-                    stockRows = productSkuMapper.update(null, new LambdaUpdateWrapper<ProductSku>()
-                            .eq(ProductSku::getId, line.skuId)
-                            .ge(ProductSku::getStock, line.qty)
-                            .setSql("stock = stock - " + line.qty));
-                } else {
-                    stockRows = productMapper.update(null, new LambdaUpdateWrapper<Product>()
-                            .eq(Product::getId, line.product.getId())
-                            .ge(Product::getStock, line.qty)
-                            .setSql("stock = stock - " + line.qty));
-                }
-                if (stockRows != 1) {
-                    throw new BusinessException(line.product.getName() + " 库存不足，请重试");
-                }
-
-                // 清除购物车中已下单的商品（按 userId + productId + skuId 匹配）
-                Long targetSkuId = (line.skuId != null && line.skuId != 0) ? line.skuId : 0L;
-                cartItemMapper.delete(new LambdaQueryWrapper<CartItem>()
-                        .eq(CartItem::getUserId, userId)
-                        .eq(CartItem::getProductId, line.product.getId())
-                        .eq(CartItem::getSkuId, targetSkuId));
-            }
-
-            // 回填 user_coupon 的 orderId
-            if (usedUserCoupon != null) {
-                userCouponMapper.update(null, new LambdaUpdateWrapper<UserCoupon>()
-                        .eq(UserCoupon::getId, usedUserCoupon.getId())
-                        .set(UserCoupon::getOrderId, order.getId()));
-            }
+            createShopSubOrder(entry.getKey(), entry.getValue(), totalOrderAmount, totalPayAmount,
+                    userCouponId, couponResult.usedUserCoupon, address, remark, userId, today, orderIds, orderNos);
         }
 
-        // 7) 幂等缓存
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("orderIds", orderIds);
-        result.put("orderNos", orderNos);
-        result.put("totalPayAmount", totalPayAmount);
-        result.put("requestId", requestId);
-
-        if (requestId != null && !requestId.isEmpty()) {
-            try {
-                redisUtil.set(REDIS_REQUEST_ID_PREFIX + requestId,
-                        OBJECT_MAPPER.writeValueAsString(result),
-                        REQUEST_ID_TTL_MINUTES, TimeUnit.MINUTES);
-            } catch (JsonProcessingException e) {
-                // 幂等缓存失败不影响下单
-            }
-        }
-
+        result.put(“orderIds”, orderIds);
+        result.put(“orderNos”, orderNos);
+        result.put(“totalPayAmount”, totalPayAmount);
+        result.put(“requestId”, requestId);
+        cacheIdempotentResult(requestId, result);
         return result;
     }
 
@@ -558,21 +326,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             throw new BusinessException("订单ID列表不能为空");
         }
 
-        // 1) 查询所有待支付订单并校验
-        List<Order> orders = new ArrayList<>();
-        BigDecimal totalPayAmount = BigDecimal.ZERO;
-        for (Long orderId : orderIds) {
-            Order order = this.getById(orderId);
-            if (order == null) throw new BusinessException("订单不存在（id=" + orderId + "）");
-            if (!userId.equals(order.getUserId())) throw new BusinessException("无权支付该订单");
-            if (order.getStatus() == null || order.getStatus() != 0) {
-                throw new BusinessException("订单状态不允许支付（id=" + orderId + "）");
-            }
-            orders.add(order);
-            totalPayAmount = totalPayAmount.add(order.getPayAmount());
-        }
+        List<Order> orders = validateBatchOrders(orderIds, userId);
+        BigDecimal totalPayAmount = orders.stream()
+                .map(Order::getPayAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // 2) CAS 扣余额（一次性扣除总金额，WHERE balance>=total 原子判断，失败回滚整批）
         int balRows = userMapper.update(null, new LambdaUpdateWrapper<User>()
                 .eq(User::getId, userId)
                 .ge(User::getBalance, totalPayAmount)
@@ -581,7 +338,6 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             throw new BusinessException("余额不足");
         }
 
-        // 3) 批量 CAS 更新订单状态（任一单已被并发支付/取消则整批回滚）
         for (Order order : orders) {
             int paidRows = this.baseMapper.update(null, new LambdaUpdateWrapper<Order>()
                     .eq(Order::getId, order.getId())
@@ -593,28 +349,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 throw new BusinessException("订单状态不允许支付（id=" + order.getId() + "，可能已支付或已取消）");
             }
             saveStatusLog(order.getId(), 0, 1, userId, "USER", "批量支付");
-
-            // 记录购买行为埋点
-            LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
-            oiWrapper.eq(OrderItem::getOrderId, order.getId());
-            List<OrderItem> items = orderItemMapper.selectList(oiWrapper);
-            for (OrderItem item : items) {
-                UserBehavior behavior = new UserBehavior();
-                behavior.setUserId(userId);
-                behavior.setProductId(item.getProductId());
-                behavior.setBehaviorType(4);
-                userBehaviorMapper.insert(behavior);
-                // 购买行为同步发 MQ，更新用户实时标签画像；MQ 不可用不应影响支付
-                try {
-                    rabbitTemplate.convertAndSend(RabbitMQConfig.RECOMMEND_EXCHANGE,
-                            RabbitMQConfig.BEHAVIOR_ROUTING_KEY,
-                            new UserBehaviorMessage(userId, item.getProductId(), 4));
-                } catch (Exception ignore) {
-                    // 忽略：埋点发送失败不影响主流程
-                }
-            }
-
-            // 沉淀店铺客户关系
+            recordPurchaseBehavior(order.getId(), userId);
             if (order.getShopId() != null && order.getShopId() > 0) {
                 shopCustomerMapper.insertOrUpdatePurchaseTime(order.getShopId(), userId);
             }
@@ -1003,7 +738,285 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 .set(UserCoupon::getOrderId, 0L));
     }
 
+    // ---------- 复杂度拆分辅助方法 ----------
+
+    private BigDecimal calculateItemsTotal(List<Map<String, Object>> items) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (Map<String, Object> item : items) {
+            Long productId = toLong(item.get("productId"));
+            Long skuId = toLong(item.get("skuId"));
+            int qty = toInt(item.get("quantity"), 1);
+            Product product = getValidProduct(productId);
+            BigDecimal price;
+            if (skuId != null && skuId != 0) {
+                ProductSku sku = getValidSku(skuId, productId);
+                price = sku.getPrice();
+            } else {
+                price = product.getPrice();
+            }
+            if (price == null) {
+                throw new BusinessException("商品价格异常");
+            }
+            total = total.add(price.multiply(BigDecimal.valueOf(qty)));
+        }
+        return total;
+    }
+
+    private Coupon validateUserCoupon(Long userCouponId, Long userId, BigDecimal totalAmount) {
+        if (userCouponId == null || userCouponId <= 0) return null;
+        UserCoupon userCoupon = userCouponMapper.selectById(userCouponId);
+        if (userCoupon == null || !userCoupon.getUserId().equals(userId)) {
+            throw new BusinessException("优惠券不存在");
+        }
+        if (userCoupon.getStatus() != null && userCoupon.getStatus() != 0) {
+            throw new BusinessException("优惠券不可用");
+        }
+        Coupon coupon = couponMapper.selectById(userCoupon.getCouponId());
+        if (coupon == null || coupon.getStatus() != 1) return null;
+        LocalDateTime now = LocalDateTime.now(ZoneId.systemDefault());
+        if (now.isBefore(coupon.getStartTime()) || now.isAfter(coupon.getEndTime())) return null;
+        if (totalAmount.compareTo(coupon.getThreshold()) < 0) return null;
+        return coupon;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> checkIdempotency(String requestId) {
+        if (requestId == null || requestId.isEmpty()) return null;
+        Object cached = redisUtil.get(REDIS_REQUEST_ID_PREFIX + requestId);
+        if (cached == null) return null;
+        try {
+            return OBJECT_MAPPER.readValue(cached.toString(), LinkedHashMap.class);
+        } catch (JsonProcessingException e) {
+            throw new BusinessException("订单幂等缓存异常");
+        }
+    }
+
+    private List<ItemLine> buildItemLines(List<Map<String, Object>> items) {
+        List<ItemLine> itemLines = new ArrayList<>();
+        for (Map<String, Object> item : items) {
+            itemLines.add(resolveItemLine(item));
+        }
+        return itemLines;
+    }
+
+    private ItemLine resolveItemLine(Map<String, Object> item) {
+        Long productId = toLong(item.get("productId"));
+        Long skuId = toLong(item.get("skuId"));
+        int qty = toInt(item.get("quantity"), 1);
+        if (qty <= 0) throw new BusinessException("购买数量必须大于0");
+
+        Product product = getValidProduct(productId);
+        if (product.getShopId() == null) throw new BusinessException("商品未绑定店铺");
+
+        BigDecimal price;
+        int availableStock;
+        String specName = "";
+        if (skuId != null && skuId != 0) {
+            ProductSku sku = getValidSku(skuId, productId);
+            price = sku.getPrice();
+            availableStock = sku.getStock() == null ? 0 : sku.getStock();
+            specName = sku.getSpecName() != null ? sku.getSpecName() : "";
+        } else {
+            price = product.getPrice();
+            availableStock = product.getStock() == null ? 0 : product.getStock();
+        }
+        if (price == null) throw new BusinessException("商品价格异常");
+        if (availableStock < qty) {
+            throw new BusinessException(product.getName() + " 库存不足（剩余 " + availableStock + "）");
+        }
+        return new ItemLine(product, skuId, price, qty, product.getShopId(), specName);
+    }
+
+    private CouponLockResult lockCoupon(Long userCouponId, Long userId,
+                                         BigDecimal totalOrderAmount, BigDecimal amountAfterMember) {
+        if (userCouponId == null || userCouponId <= 0) {
+            return new CouponLockResult(BigDecimal.ZERO, null);
+        }
+        UserCoupon userCoupon = userCouponMapper.selectById(userCouponId);
+        if (userCoupon == null || !userCoupon.getUserId().equals(userId)) throw new BusinessException("优惠券不存在");
+        if (userCoupon.getStatus() != null && userCoupon.getStatus() != 0) throw new BusinessException("优惠券已使用或已过期");
+        Coupon coupon = couponMapper.selectById(userCoupon.getCouponId());
+        if (coupon == null || coupon.getStatus() != 1
+                || LocalDateTime.now(ZoneId.systemDefault()).isBefore(coupon.getStartTime())
+                || LocalDateTime.now(ZoneId.systemDefault()).isAfter(coupon.getEndTime())) {
+            throw new BusinessException("优惠券不在有效期");
+        }
+        if (totalOrderAmount.compareTo(coupon.getThreshold()) < 0) {
+            throw new BusinessException("未达到优惠券门槛（满 " + coupon.getThreshold() + " 可用）");
+        }
+        BigDecimal discount = BigDecimal.ZERO;
+        if (coupon.getType() == 1) {
+            discount = coupon.getAmount();
+        } else if (coupon.getType() == 2) {
+            discount = amountAfterMember.multiply(BigDecimal.ONE.subtract(coupon.getAmount()));
+        }
+        int rows = userCouponMapper.update(null, new LambdaUpdateWrapper<UserCoupon>()
+                .eq(UserCoupon::getId, userCouponId)
+                .eq(UserCoupon::getStatus, 0)
+                .set(UserCoupon::getStatus, 1)
+                .set(UserCoupon::getUsedTime, LocalDateTime.now(ZoneId.systemDefault())));
+        if (rows != 1) {
+            throw new BusinessException("优惠券已被使用");
+        }
+        return new CouponLockResult(discount, userCoupon);
+    }
+
+    private void createShopSubOrder(Long shopId, List<ItemLine> lines, BigDecimal totalOrderAmount,
+                                     BigDecimal totalPayAmount, Long userCouponId, UserCoupon usedUserCoupon,
+                                     Address address, String remark, Long userId, String today,
+                                     List<Long> orderIds, List<String> orderNos) {
+        BigDecimal subTotalAmount = lines.stream()
+                .map(line -> line.price.multiply(BigDecimal.valueOf(line.qty)))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal ratio = totalOrderAmount.compareTo(BigDecimal.ZERO) > 0
+                ? subTotalAmount.divide(totalOrderAmount, 6, RoundingMode.HALF_UP)
+                : BigDecimal.ONE;
+        BigDecimal subPayAmount = totalPayAmount.multiply(ratio).setScale(2, RoundingMode.HALF_UP);
+
+        String orderNo = nextOrderNo(today);
+
+        Order order = new Order();
+        order.setOrderNo(orderNo);
+        order.setUserId(userId);
+        order.setShopId(shopId);
+        order.setTotalAmount(subTotalAmount);
+        order.setDiscountAmount(subTotalAmount.subtract(subPayAmount));
+        order.setPayAmount(subPayAmount);
+        order.setCouponId(userCouponId != null ? userCouponId : 0L);
+        order.setStatus(0);
+        order.setReceiverName(address.getReceiver());
+        order.setReceiverPhone(address.getPhone());
+        order.setReceiverAddress(address.getProvince() + address.getCity()
+                + address.getDistrict() + address.getDetail());
+
+        if (remark != null && !remark.isEmpty()) {
+            order.setRemark(remark);
+        }
+        this.save(order);
+        orderIds.add(order.getId());
+        orderNos.add(orderNo);
+
+        try {
+            rabbitTemplate.convertAndSend(RabbitMQConfig.ORDER_DELAY_EXCHANGE,
+                    RabbitMQConfig.ORDER_DELAY_ROUTING_KEY, String.valueOf(order.getId()));
+        } catch (Exception ignore) {
+            // MQ 不可用不影响下单，超时由定时扫描兜底
+        }
+
+        saveStatusLog(order.getId(), null, 0, userId, "USER", "用户下单");
+
+        for (ItemLine line : lines) {
+            processOrderItem(line, order, subPayAmount, subTotalAmount, shopId, userId);
+        }
+
+        if (usedUserCoupon != null) {
+            userCouponMapper.update(null, new LambdaUpdateWrapper<UserCoupon>()
+                    .eq(UserCoupon::getId, usedUserCoupon.getId())
+                    .set(UserCoupon::getOrderId, order.getId()));
+        }
+    }
+
+    private void processOrderItem(ItemLine line, Order order, BigDecimal subPayAmount,
+                                   BigDecimal subTotalAmount, Long shopId, Long userId) {
+        BigDecimal lineSubtotal = line.price.multiply(BigDecimal.valueOf(line.qty));
+        BigDecimal lineRatio = subTotalAmount.compareTo(BigDecimal.ZERO) > 0
+                ? lineSubtotal.divide(subTotalAmount, 6, RoundingMode.HALF_UP)
+                : BigDecimal.ONE;
+        BigDecimal lineRealPay = subPayAmount.multiply(lineRatio).setScale(2, RoundingMode.HALF_UP);
+
+        OrderItem orderItem = new OrderItem();
+        orderItem.setOrderId(order.getId());
+        orderItem.setProductId(line.product.getId());
+        orderItem.setSkuId(line.skuId != null ? line.skuId : 0L);
+        orderItem.setShopId(shopId);
+        orderItem.setProductName(line.product.getName());
+        orderItem.setProductImage(line.product.getMainImage());
+        orderItem.setSpecName(line.specName);
+        orderItem.setPrice(line.price);
+        orderItem.setQuantity(line.qty);
+        orderItem.setSubtotal(lineSubtotal);
+        orderItem.setRealPayAmount(lineRealPay);
+        orderItemMapper.insert(orderItem);
+
+        int stockRows;
+        if (line.skuId != null && line.skuId != 0) {
+            stockRows = productSkuMapper.update(null, new LambdaUpdateWrapper<ProductSku>()
+                    .eq(ProductSku::getId, line.skuId)
+                    .ge(ProductSku::getStock, line.qty)
+                    .setSql("stock = stock - " + line.qty));
+        } else {
+            stockRows = productMapper.update(null, new LambdaUpdateWrapper<Product>()
+                    .eq(Product::getId, line.product.getId())
+                    .ge(Product::getStock, line.qty)
+                    .setSql("stock = stock - " + line.qty));
+        }
+        if (stockRows != 1) {
+            throw new BusinessException(line.product.getName() + " 库存不足，请重试");
+        }
+
+        Long targetSkuId = (line.skuId != null && line.skuId != 0) ? line.skuId : 0L;
+        cartItemMapper.delete(new LambdaQueryWrapper<CartItem>()
+                .eq(CartItem::getUserId, userId)
+                .eq(CartItem::getProductId, line.product.getId())
+                .eq(CartItem::getSkuId, targetSkuId));
+    }
+
+    private void cacheIdempotentResult(String requestId, Map<String, Object> result) {
+        if (requestId == null || requestId.isEmpty()) return;
+        try {
+            redisUtil.set(REDIS_REQUEST_ID_PREFIX + requestId,
+                    OBJECT_MAPPER.writeValueAsString(result),
+                    REQUEST_ID_TTL_MINUTES, TimeUnit.MINUTES);
+        } catch (JsonProcessingException e) {
+            // 幂等缓存失败不影响下单
+        }
+    }
+
+    private List<Order> validateBatchOrders(List<Long> orderIds, Long userId) {
+        List<Order> orders = new ArrayList<>();
+        for (Long orderId : orderIds) {
+            Order order = this.getById(orderId);
+            if (order == null) throw new BusinessException("订单不存在（id=" + orderId + "）");
+            if (!userId.equals(order.getUserId())) throw new BusinessException("无权支付该订单");
+            if (order.getStatus() == null || order.getStatus() != 0) {
+                throw new BusinessException("订单状态不允许支付（id=" + orderId + "）");
+            }
+            orders.add(order);
+        }
+        return orders;
+    }
+
+    private void recordPurchaseBehavior(Long orderId, Long userId) {
+        LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
+        oiWrapper.eq(OrderItem::getOrderId, orderId);
+        List<OrderItem> items = orderItemMapper.selectList(oiWrapper);
+        for (OrderItem item : items) {
+            UserBehavior behavior = new UserBehavior();
+            behavior.setUserId(userId);
+            behavior.setProductId(item.getProductId());
+            behavior.setBehaviorType(4);
+            userBehaviorMapper.insert(behavior);
+            try {
+                rabbitTemplate.convertAndSend(RabbitMQConfig.RECOMMEND_EXCHANGE,
+                        RabbitMQConfig.BEHAVIOR_ROUTING_KEY,
+                        new UserBehaviorMessage(userId, item.getProductId(), 4));
+            } catch (Exception ignore) {
+                // 埋点发送失败不影响主流程
+            }
+        }
+    }
+
     // ---------- 内部 DTO ----------
+
+    private static class CouponLockResult {
+        final BigDecimal discount;
+        final UserCoupon usedUserCoupon;
+        CouponLockResult(BigDecimal discount, UserCoupon usedUserCoupon) {
+            this.discount = discount;
+            this.usedUserCoupon = usedUserCoupon;
+        }
+    }
 
     private static class ItemLine {
         final Product product;

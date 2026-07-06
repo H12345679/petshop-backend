@@ -63,24 +63,7 @@ public class MockDataController {
             Collections.shuffle(preferredItems);
 
             // 挑 4-7 个偏好商品，给高分(3-5)，并同步构造真实的虚拟行为日志
-            int prefCount = 4 + random.nextInt(4);
-            for (int j = 0; j < prefCount && j < preferredItems.size(); j++) {
-                Long itemId = preferredItems.get(j);
-                double score = 3.0 + random.nextInt(3); // 3, 4, 5
-                
-                // 真实模拟：偏好商品中，第1~2个模拟已购买(4)；其余模拟收藏(2)或加购(3)
-                int fallbackType = score >= 4.0 ? 3 : 2;
-                int behaviorType = (j == 0 || (j == 1 && random.nextBoolean())) ? 4 : fallbackType;
-                jdbcTemplate.update(
-                    "INSERT INTO user_behavior (id, user_id, product_id, behavior_type, create_time, update_time, deleted) VALUES (?, ?, ?, ?, NOW(), NOW(), 0)",
-                    IdWorker.getId(), userId, itemId, behaviorType
-                );
-
-                jdbcTemplate.update(
-                    "INSERT INTO user_item_score (id, user_id, product_id, score, update_time) VALUES (?, ?, ?, ?, NOW())",
-                    Long.valueOf(userId + "00" + j), userId, itemId, score
-                );
-            }
+            insertMockBehaviors(userId, preferredItems);
         }
 
         return Result.success("成功生成 40 个虚拟买家及对应的行为日志与 CF 评分矩阵数据！");
@@ -90,5 +73,23 @@ public class MockDataController {
     public Result<String> runCf() {
         cfService.runCollaborativeFilteringBatch();
         return Result.success("协同过滤跑批计算完成！");
+    }
+
+    private void insertMockBehaviors(long userId, List<Long> preferredItems) {
+        int prefCount = 4 + random.nextInt(4);
+        for (int j = 0; j < prefCount && j < preferredItems.size(); j++) {
+            Long itemId = preferredItems.get(j);
+            double score = 3.0 + random.nextInt(3);
+            int fallbackType = score >= 4.0 ? 3 : 2;
+            int behaviorType = (j == 0 || (j == 1 && random.nextBoolean())) ? 4 : fallbackType;
+            jdbcTemplate.update(
+                "INSERT INTO user_behavior (id, user_id, product_id, behavior_type, create_time, update_time, deleted) VALUES (?, ?, ?, ?, NOW(), NOW(), 0)",
+                IdWorker.getId(), userId, itemId, behaviorType
+            );
+            jdbcTemplate.update(
+                "INSERT INTO user_item_score (id, user_id, product_id, score, update_time) VALUES (?, ?, ?, ?, NOW())",
+                Long.valueOf(userId + "00" + j), userId, itemId, score
+            );
+        }
     }
 }

@@ -31,7 +31,29 @@ public class JwtInterceptor implements HandlerInterceptor {
             return true;
         }
 
-        // 尝试解析 Token（无论是否强制要求登录，有合法 Token 就把用户信息放入上下文）
+        trySetUserContext(request);
+
+        RequireLogin requireLogin = getAnnotation(hm, RequireLogin.class);
+        RequireRole requireRole = getAnnotation(hm, RequireRole.class);
+
+        if (requireLogin == null && requireRole == null) {
+            return true;
+        }
+
+        if (UserContext.getUserId() == null) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED);
+        }
+
+        String role = UserContext.getRole();
+        if (requireRole != null) {
+            if (role == null || !Arrays.asList(requireRole.value()).contains(role)) {
+                throw new BusinessException(ResultCode.FORBIDDEN);
+            }
+        }
+        return true;
+    }
+
+    private void trySetUserContext(HttpServletRequest request) {
         String token = request.getHeader("Authorization");
         if (token != null && token.startsWith("Bearer ")) {
             token = token.substring(7);
@@ -44,30 +66,9 @@ public class JwtInterceptor implements HandlerInterceptor {
                 String role = claims.get("role", String.class);
                 UserContext.set(new UserContext.LoginUser(userId, username, role));
             } catch (Exception e) {
-                // Token 无效：对公开接口宽容（忽略无效 token），对强制登录接口严格
+                // Token 无效时忽略，后续按是否需要登录决定是否报错
             }
         }
-
-        RequireLogin requireLogin = getAnnotation(hm, RequireLogin.class);
-        RequireRole requireRole = getAnnotation(hm, RequireRole.class);
-
-        // 公开接口直接放行（即使无 token / token 无效也放行）
-        if (requireLogin == null && requireRole == null) {
-            return true;
-        }
-
-        // 强制登录接口：必须有合法 token
-        if (UserContext.getUserId() == null) {
-            throw new BusinessException(ResultCode.UNAUTHORIZED);
-        }
-
-        String role = UserContext.getRole();
-        if (requireRole != null) {
-            if (role == null || !Arrays.asList(requireRole.value()).contains(role)) {
-                throw new BusinessException(ResultCode.FORBIDDEN);
-            }
-        }
-        return true;
     }
 
     @Override
