@@ -208,7 +208,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         refund.setStatus(1); // 已退款(结束)
         if (remark != null && !remark.trim().isEmpty()) {
             String old = refund.getAuditRemark();
-            refund.setAuditRemark((old != null && !old.isEmpty() ? old + "；" : "") + "确认收货：" + remark.trim());
+            refund.setAuditRemark((old != null && !old.isEmpty() ? old + ";" : "") + "确认收货：" + remark.trim());
         }
         this.updateById(refund);
 
@@ -236,7 +236,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
 
         int currentStatus = order.getStatus();
         if (currentStatus != 3) {
-            throw new BusinessException("已收货的订单才可直接退单（当前：" + statusDesc(currentStatus) + "）");
+            throw new BusinessException("已收货的订单才可直接退单（当前：" + statusDesc(currentStatus) + ")");
         }
         OrderStatus.checkTransition(currentStatus, -4);
 
