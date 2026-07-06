@@ -13,7 +13,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Random;
+import java.security.SecureRandom;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 
 @RestController
@@ -21,10 +22,13 @@ import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 @RequireRole("ADMIN")   // 造数/跑批会删改 user 与评分表，仅管理员可调
 public class MockDataController {
 
-    private final Random random = new Random();
+    private final SecureRandom random = new SecureRandom();
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
 
     @Autowired
     private com.petshop.recommend.service.CollaborativeFilteringService cfService;
@@ -45,6 +49,7 @@ public class MockDataController {
         jdbcTemplate.update("DELETE FROM user WHERE id >= 1000");
 
         // 3. 构造 20 个爱猫派 (User 1000~1019) 和 20 个爱狗派 (User 1020~1039)
+        String defaultPasswordHash = passwordEncoder.encode("123456");
         for (int i = 0; i < 40; i++) {
             long userId = 1000L + i;
             String username = "mock_user_" + userId;
@@ -52,8 +57,8 @@ public class MockDataController {
             
             // 插入用户
             jdbcTemplate.update(
-                "INSERT INTO user (id, username, password, nickname, role, status, create_time, update_time, deleted) VALUES (?, ?, '$2a$10$0UlSviT.aZbhHVFNNVgqU.oPOlgznSSCZH.98rSwKS020//.Y2aOm', ?, 'USER', 1, NOW(), NOW(), 0)",
-                userId, username, nickname
+                "INSERT INTO user (id, username, password, nickname, role, status, create_time, update_time, deleted) VALUES (?, ?, ?, ?, 'USER', 1, NOW(), NOW(), 0)",
+                userId, username, defaultPasswordHash, nickname
             );
 
             // 分配商品和评分
