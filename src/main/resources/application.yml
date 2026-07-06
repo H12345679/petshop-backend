@@ -23,11 +23,11 @@ spring:
     time-zone: GMT+8
     serialization:
       write-dates-as-timestamps: false
-  # 文件上传大小限制（视频已改为前端直传，此处恢复为安全的 10MB）
+  # 文件上传大小限制（视频已改为前端直传，此处恢复为安全的 8MB）
   servlet:
     multipart:
-      max-file-size: 10MB
-      max-request-size: 10MB
+      max-file-size: 8MB
+      max-request-size: 8MB
 
 # 七牛云对象存储（商品图片 + 视频，统一存储）。
 # 下面是「占位默认值」：保证没有 application-local.yml 的人也能正常启动（只是上传会失败）。
