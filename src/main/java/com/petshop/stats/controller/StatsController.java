@@ -53,4 +53,25 @@ public class StatsController {
     public Result<List<Map<String, Object>>> productSales(@RequestParam(defaultValue = "10") Integer limit) {
         return Result.success(statsService.getProductSales(limit));
     }
+
+    @ApiOperation("历史日度聚合统计")
+    @RequireRole({"ADMIN"})
+    @GetMapping("/daily")
+    public Result<List<Map<String, Object>>> dailyStats(@RequestParam(defaultValue = "30") Integer days) {
+        return Result.success(statsService.getDailyStats(days));
+    }
+
+    @ApiOperation("操作日志统计")
+    @RequireRole({"ADMIN"})
+    @GetMapping("/log-ops")
+    public Result<Map<String, Object>> logOps(@RequestParam(defaultValue = "7") Integer days) {
+        return Result.success(statsService.getLogOps(days));
+    }
+
+    @ApiOperation("店铺商品销量排行 TopN")
+    @RequireRole({"ADMIN", "MERCHANT"})
+    @GetMapping("/shop-ranking")
+    public Result<List<Map<String, Object>>> shopRanking(@RequestParam(defaultValue = "10") Integer limit) {
+        return Result.success(statsService.getShopRanking(limit));
+    }
 }
