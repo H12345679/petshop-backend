@@ -26,11 +26,14 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
 public class UserServiceImpl implements UserService {
+
+    private static final String COL_USERNAME = "username";
 
     @Autowired
     private UserMapper userMapper;
@@ -48,7 +51,7 @@ public class UserServiceImpl implements UserService {
     public UserVO register(RegisterDTO dto) {
         // 检查用户名唯一性
         QueryWrapper<User> qw = new QueryWrapper<>();
-        qw.eq("username", dto.getUsername());
+        qw.eq(COL_USERNAME, dto.getUsername());
         if (userMapper.selectCount(qw) > 0) {
             throw new BusinessException("用户名已存在");
         }
@@ -73,7 +76,7 @@ public class UserServiceImpl implements UserService {
     public LoginVO login(LoginDTO dto) {
         // 按用户名查询
         QueryWrapper<User> qw = new QueryWrapper<>();
-        qw.eq("username", dto.getUsername());
+        qw.eq(COL_USERNAME, dto.getUsername());
         User user = userMapper.selectOne(qw);
         if (user == null) {
             throw new BusinessException("用户名或密码错误");
@@ -93,7 +96,7 @@ public class UserServiceImpl implements UserService {
         String token = jwtUtil.createToken(user.getId(), user.getUsername(), user.getRole());
 
         // 更新最后登录时间
-        user.setLastLoginTime(LocalDateTime.now());
+        user.setLastLoginTime(LocalDateTime.now(ZoneId.systemDefault()));
         userMapper.updateById(user);
 
         // 组装返回
@@ -174,7 +177,7 @@ public class UserServiceImpl implements UserService {
         QueryWrapper<User> qw = new QueryWrapper<>();
         qw.eq("deleted", 0);
         if (username != null && !username.trim().isEmpty()) {
-            qw.like("username", username.trim());
+            qw.like(COL_USERNAME, username.trim());
         }
         if (role != null && !role.trim().isEmpty()) {
             qw.eq("role", role.trim());
@@ -219,7 +222,7 @@ public class UserServiceImpl implements UserService {
         QueryWrapper<User> qw = new QueryWrapper<>();
         qw.eq("deleted", 0);
         if (username != null && !username.trim().isEmpty()) {
-            qw.like("username", username.trim());
+            qw.like(COL_USERNAME, username.trim());
         }
         // Use subquery to find users who are customers of the merchant's shops
         qw.inSql("id", "SELECT user_id FROM shop_customer WHERE shop_id IN (" + shopIds.stream().map(String::valueOf).collect(Collectors.joining(",")) + ")");

@@ -21,6 +21,8 @@ import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 @RequireRole("ADMIN")   // 造数/跑批会删改 user 与评分表，仅管理员可调
 public class MockDataController {
 
+    private final Random random = new Random();
+
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
@@ -30,7 +32,6 @@ public class MockDataController {
     @GetMapping("/mock-cf-data")
     @Transactional
     public Result<String> mockCfData() {
-        Random random = new Random();
         
         // 1. 准备商品库 (分类)
         // 猫相关商品: 1008(猫粮), 1009(鸡肉冻干), 1010(营养罐头), 1012(逗猫棒), 1014(猫抓板), 1018(智能猫砂盆), 1022(防臭猫砂盆), 1027(猫薄荷鱼), 1031(无谷猫粮2), 1032(鸡肉冻干2), 1033(猫抓板2)
@@ -45,7 +46,7 @@ public class MockDataController {
 
         // 3. 构造 20 个爱猫派 (User 1000~1019) 和 20 个爱狗派 (User 1020~1039)
         for (int i = 0; i < 40; i++) {
-            long userId = 1000 + i;
+            long userId = 1000L + i;
             String username = "mock_user_" + userId;
             String nickname = (i < 20) ? "猫奴_" + i : "汪星人_" + i;
             
@@ -68,7 +69,8 @@ public class MockDataController {
                 double score = 3.0 + random.nextInt(3); // 3, 4, 5
                 
                 // 真实模拟：偏好商品中，第1~2个模拟已购买(4)；其余模拟收藏(2)或加购(3)
-                int behaviorType = (j == 0 || (j == 1 && random.nextBoolean())) ? 4 : (score >= 4.0 ? 3 : 2);
+                int fallbackType = score >= 4.0 ? 3 : 2;
+                int behaviorType = (j == 0 || (j == 1 && random.nextBoolean())) ? 4 : fallbackType;
                 jdbcTemplate.update(
                     "INSERT INTO user_behavior (id, user_id, product_id, behavior_type, create_time, update_time, deleted) VALUES (?, ?, ?, ?, NOW(), NOW(), 0)",
                     IdWorker.getId(), userId, itemId, behaviorType

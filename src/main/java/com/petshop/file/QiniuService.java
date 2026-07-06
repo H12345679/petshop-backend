@@ -53,7 +53,7 @@ public class QiniuService {
             }
             // 4) 返回带签名的私有访问 URL（有效期 1 年）
             String baseUrl = qiniuConfig.getDomain() + "/" + key;
-            long expireInSeconds = 3600 * 24 * 365; // 1年
+            long expireInSeconds = 3600L * 24 * 365;
             return auth.privateDownloadUrl(baseUrl, expireInSeconds);
         } catch (QiniuException e) {
             throw new BusinessException("七牛上传异常：" + e.getMessage());

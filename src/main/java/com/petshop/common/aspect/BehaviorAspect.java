@@ -64,8 +64,7 @@ public class BehaviorAspect {
                     new UserBehaviorMessage(userId, productId, trackBehavior.type()));
             }
         } catch (Exception e) {
-            // 捕获所有异常，确保埋点逻辑崩溃绝不影响主业务的正常返回
-            // 可以加入日志：log.error("用户行为埋点记录失败", e);
+            // 埋点失败不影响主业务
         }
     }
 

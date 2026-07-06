@@ -147,7 +147,7 @@ public class OrderController {
 
     private Long toLong(Object v, Long defaultValue) {
         if (v == null) return defaultValue;
-        if (v instanceof Number) return ((Number) v).longValue();
+        if (v instanceof Number number) return number.longValue();
         try {
             return Long.parseLong(v.toString());
         } catch (NumberFormatException e) {
@@ -157,7 +157,7 @@ public class OrderController {
 
     private Integer toInteger(Object v, Integer defaultValue) {
         if (v == null) return defaultValue;
-        if (v instanceof Number) return ((Number) v).intValue();
+        if (v instanceof Number number) return number.intValue();
         try {
             return Integer.parseInt(v.toString());
         } catch (NumberFormatException e) {

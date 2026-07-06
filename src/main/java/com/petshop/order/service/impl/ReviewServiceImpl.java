@@ -158,6 +158,7 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
                                                        Integer rating, Integer hasReply,
                                                        Integer showDeleted) {
         List<Review> reviewList;
+        long total;
 
         if (showDeleted != null && showDeleted == 1) {
             // 查已删除（绕过 MP @TableLogic 自动过滤）
@@ -165,66 +166,19 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
             Page<Review> page = reviewMapper.selectManageWithDeleted(
                     new Page<>(current, size), shopIds, productId, rating, hasReply);
             reviewList = page.getRecords();
+            total = reviewMapper.countManageWithDeleted(shopIds, productId, rating, hasReply);
         } else {
             // 正常查询（MP 自动过滤 deleted=0）
-            LambdaQueryWrapper<Review> wrapper = new LambdaQueryWrapper<>();
-
-            // MERCHANT 只看自家店
-            List<Long> shopIds = ownershipChecker.myShopIds();
-            if (shopIds != null) {
-                if (shopIds.isEmpty()) {
-                    wrapper.eq(Review::getId, -1L);
-                } else {
-                    wrapper.in(Review::getShopId, shopIds);
-                }
-            }
-            if (productId != null) {
-                wrapper.eq(Review::getProductId, productId);
-            }
-            if (rating != null) {
-                wrapper.eq(Review::getRating, rating);
-            }
-            if (hasReply != null) {
-                if (hasReply == 1) {
-                    wrapper.isNotNull(Review::getReply).ne(Review::getReply, "");
-                } else {
-                    wrapper.and(w -> w.isNull(Review::getReply).or().eq(Review::getReply, ""));
-                }
-            }
+            LambdaQueryWrapper<Review> wrapper = buildManageWrapper(productId, rating, hasReply);
             wrapper.orderByDesc(Review::getCreateTime);
-
             reviewList = this.page(new Page<>(current, size), wrapper).getRecords();
+
+            LambdaQueryWrapper<Review> countWrapper = buildManageWrapper(productId, rating, hasReply);
+            total = this.count(countWrapper);
         }
 
         // 组装结果 — 附加用户名/商品名/订单号
         List<Map<String, Object>> records = buildRecords(reviewList);
-
-        // 获取 total
-        long total;
-        if (showDeleted != null && showDeleted == 1) {
-            List<Long> shopIds = ownershipChecker.myShopIds();
-            total = reviewMapper.countManageWithDeleted(shopIds, productId, rating, hasReply);
-        } else {
-            LambdaQueryWrapper<Review> countWrapper = new LambdaQueryWrapper<>();
-            List<Long> shopIds = ownershipChecker.myShopIds();
-            if (shopIds != null) {
-                if (shopIds.isEmpty()) {
-                    countWrapper.eq(Review::getId, -1L);
-                } else {
-                    countWrapper.in(Review::getShopId, shopIds);
-                }
-            }
-            if (productId != null) countWrapper.eq(Review::getProductId, productId);
-            if (rating != null) countWrapper.eq(Review::getRating, rating);
-            if (hasReply != null) {
-                if (hasReply == 1) {
-                    countWrapper.isNotNull(Review::getReply).ne(Review::getReply, "");
-                } else {
-                    countWrapper.and(w -> w.isNull(Review::getReply).or().eq(Review::getReply, ""));
-                }
-            }
-            total = this.count(countWrapper);
-        }
 
         PageResult<Map<String, Object>> pr = new PageResult<>();
         pr.setTotal(total);
@@ -235,45 +189,93 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
         return pr;
     }
 
+    /** 构建管理端评价查询条件（含店铺归属、商品、评分、回复状态过滤） */
+    private LambdaQueryWrapper<Review> buildManageWrapper(Long productId, Integer rating, Integer hasReply) {
+        LambdaQueryWrapper<Review> wrapper = new LambdaQueryWrapper<>();
+        // MERCHANT 只看自家店
+        List<Long> shopIds = ownershipChecker.myShopIds();
+        if (shopIds != null) {
+            if (shopIds.isEmpty()) {
+                wrapper.eq(Review::getId, -1L);
+            } else {
+                wrapper.in(Review::getShopId, shopIds);
+            }
+        }
+        if (productId != null) {
+            wrapper.eq(Review::getProductId, productId);
+        }
+        if (rating != null) {
+            wrapper.eq(Review::getRating, rating);
+        }
+        if (hasReply != null) {
+            applyHasReplyFilter(wrapper, hasReply);
+        }
+        return wrapper;
+    }
+
+    /** 应用"是否已回复"过滤条件 */
+    private void applyHasReplyFilter(LambdaQueryWrapper<Review> wrapper, int hasReply) {
+        if (hasReply == 1) {
+            wrapper.isNotNull(Review::getReply).ne(Review::getReply, "");
+        } else {
+            wrapper.and(w -> w.isNull(Review::getReply).or().eq(Review::getReply, ""));
+        }
+    }
+
     /** 批量构建评价 VO（含用户名/商品名/规格/订单号） */
     private List<Map<String, Object>> buildRecords(List<Review> reviewList) {
         List<Map<String, Object>> records = new ArrayList<>();
         for (Review r : reviewList) {
-            Map<String, Object> vo = new LinkedHashMap<>();
-            vo.put("id", r.getId());
-            vo.put("orderId", r.getOrderId());
-            vo.put("orderItemId", r.getOrderItemId());
-            vo.put("userId", r.getUserId());
-            vo.put("productId", r.getProductId());
-            vo.put("shopId", r.getShopId());
-            vo.put("rating", r.getRating());
-            vo.put("content", r.getContent());
-            vo.put("images", r.getImages());
-            vo.put("reply", r.getReply());
-            vo.put("createTime", r.getCreateTime());
-            vo.put("deleted", r.getDeleted());
-            // 查用户昵称
-            User u = userMapper.selectById(r.getUserId());
-            vo.put("username", u != null ? u.getUsername() : "");
-            vo.put("nickname", u != null ? u.getNickname() : "");
-            // 查商品信息
-            Product product = productMapper.selectById(r.getProductId());
-            vo.put("productName", product != null ? product.getName() : "");
-            vo.put("productImage", product != null ? product.getMainImage() : "");
-            // 查订单明细（规格名）
-            if (r.getOrderItemId() != null) {
-                OrderItem oi = orderItemMapper.selectById(r.getOrderItemId());
-                vo.put("specName", oi != null ? oi.getSpecName() : "");
-            } else {
-                vo.put("specName", "");
-            }
-            // 查订单号
-            Order order = orderMapper.selectById(r.getOrderId());
-            vo.put("orderNo", order != null ? order.getOrderNo() : "");
-
-            records.add(vo);
+            records.add(buildSingleReviewVO(r));
         }
         return records;
+    }
+
+    /** 构建单条评价 VO Map */
+    private Map<String, Object> buildSingleReviewVO(Review r) {
+        Map<String, Object> vo = new LinkedHashMap<>();
+        vo.put("id", r.getId());
+        vo.put("orderId", r.getOrderId());
+        vo.put("orderItemId", r.getOrderItemId());
+        vo.put("userId", r.getUserId());
+        vo.put("productId", r.getProductId());
+        vo.put("shopId", r.getShopId());
+        vo.put("rating", r.getRating());
+        vo.put("content", r.getContent());
+        vo.put("images", r.getImages());
+        vo.put("reply", r.getReply());
+        vo.put("createTime", r.getCreateTime());
+        vo.put("deleted", r.getDeleted());
+        enrichWithUserInfo(vo, r.getUserId());
+        enrichWithProductInfo(vo, r.getProductId());
+        enrichWithOrderInfo(vo, r.getOrderItemId(), r.getOrderId());
+        return vo;
+    }
+
+    /** 填充用户昵称/用户名 */
+    private void enrichWithUserInfo(Map<String, Object> vo, Long userId) {
+        User u = userMapper.selectById(userId);
+        vo.put("username", u != null ? u.getUsername() : "");
+        vo.put("nickname", u != null ? u.getNickname() : "");
+    }
+
+    /** 填充商品名/商品图 */
+    private void enrichWithProductInfo(Map<String, Object> vo, Long productId) {
+        Product product = productMapper.selectById(productId);
+        vo.put("productName", product != null ? product.getName() : "");
+        vo.put("productImage", product != null ? product.getMainImage() : "");
+    }
+
+    /** 填充规格名和订单号 */
+    private void enrichWithOrderInfo(Map<String, Object> vo, Long orderItemId, Long orderId) {
+        if (orderItemId != null) {
+            OrderItem oi = orderItemMapper.selectById(orderItemId);
+            vo.put("specName", oi != null ? oi.getSpecName() : "");
+        } else {
+            vo.put("specName", "");
+        }
+        Order order = orderMapper.selectById(orderId);
+        vo.put("orderNo", order != null ? order.getOrderNo() : "");
     }
 
     @Override

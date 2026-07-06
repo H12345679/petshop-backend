@@ -107,7 +107,7 @@ public class RefundController {
 
     private Long toLong(Object v) {
         if (v == null) return null;
-        if (v instanceof Number) return ((Number) v).longValue();
+        if (v instanceof Number number) return number.longValue();
         try {
             return Long.parseLong(v.toString());
         } catch (NumberFormatException e) {
@@ -117,7 +117,7 @@ public class RefundController {
 
     private Integer toInteger(Object v) {
         if (v == null) return null;
-        if (v instanceof Number) return ((Number) v).intValue();
+        if (v instanceof Number number) return number.intValue();
         try {
             return Integer.parseInt(v.toString());
         } catch (NumberFormatException e) {
@@ -127,7 +127,7 @@ public class RefundController {
 
     private BigDecimal toBigDecimal(Object v) {
         if (v == null) return null;
-        if (v instanceof BigDecimal) return (BigDecimal) v;
+        if (v instanceof BigDecimal bd) return bd;
         try {
             return new BigDecimal(v.toString());
         } catch (NumberFormatException e) {

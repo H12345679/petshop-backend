@@ -132,9 +132,7 @@ public class OwnershipChecker {
         }
         List<Shop> shops = shopMapper.selectList(
                 new LambdaQueryWrapper<Shop>().eq(Shop::getOwnerId, currentUserId()));
-        List<Long> ids = shops.stream().map(Shop::getId).collect(Collectors.toList());
-        // MERCHANT 无店铺时返回空列表，调用方需处理 IN () 语法问题
-        return ids;
+        return shops.stream().map(Shop::getId).collect(Collectors.toList());
     }
 
     // ---------------- 内部 ----------------

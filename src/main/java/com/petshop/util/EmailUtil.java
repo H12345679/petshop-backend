@@ -36,7 +36,7 @@ public class EmailUtil {
 
             mailSender.send(message);
         } catch (MessagingException e) {
-            throw new RuntimeException("邮件发送失败，请稍后重试", e);
+            throw new IllegalStateException("邮件发送失败，请稍后重试", e);
         }
     }
 
