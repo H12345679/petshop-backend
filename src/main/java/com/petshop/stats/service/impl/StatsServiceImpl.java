@@ -26,7 +26,7 @@ public class StatsServiceImpl implements StatsService {
 
     private static final String COUNT = "count";
     private static final String TOTAL_SALES = "totalSales";
-    private final Random random = new Random();
+    private final java.security.SecureRandom random = new java.security.SecureRandom();
 
     @Autowired
     private OrderMapper orderMapper;
