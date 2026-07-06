@@ -6,8 +6,7 @@ import com.petshop.product.entity.Tag;
 import com.petshop.product.mapper.ProductMapper;
 import com.petshop.product.mapper.TagMapper;
 import com.petshop.recommend.service.RecommendRankService;
-import com.petshop.user.entity.User;
-import com.petshop.user.mapper.UserMapper;
+
 import com.petshop.user.service.UserPetService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,9 +20,9 @@ import java.util.*;
 /**
  * 多路召回 + 融合排序实现。
  * <p>
- * 四路召回：①CF(recommend_result) ②标签画像(Redis ZSET) ③宠物档案标签 ④人群热度
- * （养同类宠物的用户加购/购买热榜；无档案退化为同性别人群）。
+ * 三路召回：①CF(recommend_result) ②标签画像(Redis ZSET) ③宠物档案标签。
  * 融合打分后做物种冲突过滤、近购惩罚、类目打散，并给出推荐理由。
+ * 三路召回全部为空时，退化为全局 30 天热销 TOP N 兜底。
  */
 @Slf4j
 @Service
@@ -38,15 +37,12 @@ public class RecommendRankServiceImpl implements RecommendRankService {
     @Autowired
     private TagMapper tagMapper;
     @Autowired
-    private UserMapper userMapper;
-    @Autowired
     private UserPetService userPetService;
 
-    // 融合权重（对应《推荐系统深化方案》§4，P0 先实现四项）
+    // 融合权重（三路召回）
     private static final double W_CF = 0.40;
-    private static final double W_TAG = 0.25;
-    private static final double W_PET = 0.20;
-    private static final double W_CROWD = 0.15;
+    private static final double W_TAG = 0.35;
+    private static final double W_PET = 0.25;
     /** 近 30 天购买过的商品降权 */
     private static final double PENALTY_RECENT_BUY = 0.30;
     /** 同类目最多展示件数（打散） */
@@ -73,19 +69,22 @@ public class RecommendRankServiceImpl implements RecommendRankService {
         List<String> petTagNames = userPetService.petTagNames(userId);
         Set<Long> petTagIds = tagIdsByNames(petTagNames);
         List<Integer> mySpecies = userPetService.petSpecies(userId);
-        // ===== 召回4：人群热度（个人信息：养宠人群 > 同性别人群） =====
-        Map<Long, Double> crowdScore = recallCrowd(userId, mySpecies, candN);
+
 
         // 候选池 = 各路并集
         Set<Long> candidateIds = new LinkedHashSet<>(cfScore.keySet());
         if (!profileTagWeight.isEmpty()) {
+            // 用标签画像的标签ID去 product_tag 表查哪些商品有这些标签
             candidateIds.addAll(productIdsByTagIds(profileTagWeight.keySet(), candN));
         }
         if (!petTagIds.isEmpty()) {
+            // 同理，宠物档案的标签也去反查商品
             candidateIds.addAll(productIdsByTagIds(petTagIds, candN));
         }
-        candidateIds.addAll(crowdScore.keySet());
-        if (candidateIds.isEmpty()) return new ArrayList<>();
+        // 三路全空 → 全局热销兜底
+        if (candidateIds.isEmpty()) {
+            return fallbackHotSelling(n);
+        }
 
         // 批量取商品（上架）与商品标签
         Map<Long, Product> products = loadActiveProducts(candidateIds);
@@ -95,7 +94,6 @@ public class RecommendRankServiceImpl implements RecommendRankService {
 
         // ===== 融合打分 =====
         double cfMax = maxValue(cfScore);
-        double crowdMax = maxValue(crowdScore);
         List<Object[]> scored = new ArrayList<>(); // [productId, finalScore, reason]
         for (Long pid : products.keySet()) {
             Set<Long> tags = productTags.getOrDefault(pid, Collections.emptySet());
@@ -122,13 +120,11 @@ public class RecommendRankServiceImpl implements RecommendRankService {
                 if (pet > 1.0) pet = 1.0;
             }
 
-            double crowd = crowdMax > 0 ? crowdScore.getOrDefault(pid, 0.0) / crowdMax : 0.0;
-
-            double score = W_CF * cf + W_TAG * tagMatch + W_PET * pet + W_CROWD * crowd;
+            double score = W_CF * cf + W_TAG * tagMatch + W_PET * pet;
             if (recentBought.contains(pid)) score -= PENALTY_RECENT_BUY;
             if (score <= 0) continue;
 
-            scored.add(new Object[]{pid, score, pickReason(cf, tagMatch, pet, crowd, petTagIds.isEmpty(), mySpecies)});
+            scored.add(new Object[]{pid, score, pickReason(cf, tagMatch, pet, petTagIds.isEmpty(), mySpecies)});
         }
         scored.sort((a, b) -> Double.compare((double) b[1], (double) a[1]));
 
@@ -202,39 +198,31 @@ public class RecommendRankServiceImpl implements RecommendRankService {
     }
 
     /**
-     * 人群热度召回：优先"养同类宠物的用户"的加购/购买热榜（个人信息深度参与）；
-     * 无宠物档案时退化为"同性别用户"热榜。productId -> 人次
+     * 冷启动兜底：三路召回全空时，按近 30 天订单销量取全局热销 TOP N。
      */
-    private Map<Long, Double> recallCrowd(Long userId, List<Integer> mySpecies, int limit) {
-        Map<Long, Double> map = new LinkedHashMap<>();
+    private List<Product> fallbackHotSelling(int n) {
         try {
-            List<Map<String, Object>> rows;
-            if (!mySpecies.isEmpty()) {
-                String in = joinInts(mySpecies);
-                rows = jdbcTemplate.queryForList(
-                        "SELECT ub.product_id, COUNT(DISTINCT ub.user_id) cnt FROM user_behavior ub " +
-                        "JOIN user_pet up ON ub.user_id = up.user_id AND up.deleted = 0 " +
-                        "WHERE up.species IN (" + in + ") AND ub.behavior_type IN (3,4) AND ub.deleted = 0 " +
-                        "AND ub.user_id <> ? GROUP BY ub.product_id ORDER BY cnt DESC LIMIT ?",
-                        userId, limit);
-            } else {
-                User me = userMapper.selectById(userId);
-                Integer gender = me != null ? me.getGender() : null;
-                if (gender == null || (gender != 1 && gender != 2)) return map;
-                rows = jdbcTemplate.queryForList(
-                        "SELECT ub.product_id, COUNT(DISTINCT ub.user_id) cnt FROM user_behavior ub " +
-                        "JOIN `user` u ON ub.user_id = u.id AND u.deleted = 0 " +
-                        "WHERE u.gender = ? AND ub.behavior_type IN (3,4) AND ub.deleted = 0 " +
-                        "AND ub.user_id <> ? GROUP BY ub.product_id ORDER BY cnt DESC LIMIT ?",
-                        gender, userId, limit);
+            List<Long> ids = jdbcTemplate.queryForList(
+                    "SELECT oi.product_id FROM order_item oi JOIN orders o ON oi.order_id = o.id " +
+                    "WHERE o.status >= 1 AND o.create_time >= NOW() - INTERVAL 30 DAY " +
+                    "GROUP BY oi.product_id ORDER BY COUNT(*) DESC LIMIT ?",
+                    Long.class, n);
+            if (ids.isEmpty()) return new ArrayList<>();
+            Map<Long, Product> products = loadActiveProducts(new LinkedHashSet<>(ids));
+            List<Product> result = new ArrayList<>();
+            for (Long id : ids) {
+                Product p = products.get(id);
+                if (p != null) {
+                    p.setRecommendReason("热销好物");
+                    result.add(p);
+                }
+                if (result.size() >= n) break;
             }
-            for (Map<String, Object> r : rows) {
-                map.put(((Number) r.get("product_id")).longValue(), ((Number) r.get("cnt")).doubleValue());
-            }
+            return result;
         } catch (Exception e) {
-            log.warn("人群热度召回失败: {}", e.getMessage());
+            log.warn("热销兜底查询失败: {}", e.getMessage());
+            return new ArrayList<>();
         }
-        return map;
     }
 
     // ==================== 数据加载 ====================
@@ -334,19 +322,17 @@ public class RecommendRankServiceImpl implements RecommendRankService {
         return speciesTagIdCache.get(name);
     }
 
-    /** 按四路贡献大小挑推荐理由（个人信息路优先展示，演示效果直观） */
-    private String pickReason(double cf, double tag, double pet, double crowd,
+    /** 按三路贡献大小挑推荐理由（个人信息路优先展示，演示效果直观） */
+    private String pickReason(double cf, double tag, double pet,
                               boolean noPet, List<Integer> mySpecies) {
         double petContrib = noPet ? 0 : W_PET * pet;
         double tagContrib = W_TAG * tag;
         double cfContrib = W_CF * cf;
-        double crowdContrib = W_CROWD * crowd;
 
-        double max = Math.max(Math.max(petContrib, tagContrib), Math.max(cfContrib, crowdContrib));
+        double max = Math.max(Math.max(petContrib, tagContrib), cfContrib);
         if (max <= 0) return "热销好物";
         if (max == petContrib) return "为你的" + speciesNick(mySpecies) + "挑选";
         if (max == tagContrib) return "根据你的浏览偏好";
-        if (max == crowdContrib) return noPet ? "同好用户都在买" : "养" + speciesNick(mySpecies) + "的用户都在买";
         return "和你相似的用户也买了";
     }
 
@@ -380,12 +366,5 @@ public class RecommendRankServiceImpl implements RecommendRankService {
         return sb.toString();
     }
 
-    private String joinInts(Collection<Integer> ids) {
-        StringBuilder sb = new StringBuilder();
-        for (Integer id : ids) {
-            if (sb.length() > 0) sb.append(',');
-            sb.append(id);
-        }
-        return sb.toString();
-    }
+
 }
