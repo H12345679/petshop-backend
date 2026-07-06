@@ -58,10 +58,8 @@ public class MockDataController {
             // 分配商品和评分
             boolean isCatLover = i < 20;
             List<Long> preferredItems = new ArrayList<>(isCatLover ? catItems : dogItems);
-            List<Long> otherItems = new ArrayList<>(isCatLover ? dogItems : catItems);
             
             Collections.shuffle(preferredItems);
-            Collections.shuffle(otherItems);
 
             // 挑 4-7 个偏好商品，给高分(3-5)，并同步构造真实的虚拟行为日志
             int prefCount = 4 + random.nextInt(4);
@@ -79,23 +77,6 @@ public class MockDataController {
                 jdbcTemplate.update(
                     "INSERT INTO user_item_score (id, user_id, product_id, score, update_time) VALUES (?, ?, ?, ?, NOW())",
                     Long.valueOf(userId + "00" + j), userId, itemId, score
-                );
-            }
-
-            // 挑 0-2 个非偏好商品，给低分(1-2)，同步构造浏览行为(1)
-            int otherCount = random.nextInt(3);
-            for (int j = 0; j < otherCount && j < otherItems.size(); j++) {
-                Long itemId = otherItems.get(j);
-                double score = 1.0 + random.nextInt(2); // 1, 2
-                
-                jdbcTemplate.update(
-                    "INSERT INTO user_behavior (id, user_id, product_id, behavior_type, create_time, update_time, deleted) VALUES (?, ?, ?, ?, NOW(), NOW(), 0)",
-                    IdWorker.getId(), userId, itemId, 1
-                );
-
-                jdbcTemplate.update(
-                    "INSERT INTO user_item_score (id, user_id, product_id, score, update_time) VALUES (?, ?, ?, ?, NOW())",
-                    Long.valueOf(userId + "99" + j), userId, itemId, score
                 );
             }
         }
