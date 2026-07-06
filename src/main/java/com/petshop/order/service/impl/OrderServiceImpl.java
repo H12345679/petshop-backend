@@ -41,6 +41,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
@@ -95,6 +96,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     private RabbitTemplate rabbitTemplate;
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final String TOTAL_AMOUNT = "totalAmount";
+    private static final String DISCOUNT_AMOUNT = "discountAmount";
+    private static final String PAY_AMOUNT = "payAmount";
+    private static final String COUPON_ID = "couponId";
+    private static final String STATUS = "status";
     private static final String REDIS_REQUEST_ID_PREFIX = "order:requestId:";
     private static final String REDIS_ORDER_NO_SEQ = "order:no:seq:";
     private static final int REQUEST_ID_TTL_MINUTES = 30;
@@ -147,20 +153,16 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             }
             Coupon coupon = couponMapper.selectById(userCoupon.getCouponId());
             if (coupon != null && coupon.getStatus() == 1
-                    && !LocalDateTime.now().isBefore(coupon.getStartTime())
-                    && !LocalDateTime.now().isAfter(coupon.getEndTime())) {
-                // 【核心规则】：优惠券的“满减门槛”是按商品的【原价总额】来算的（为了让用户更容易凑单），但减掉的钱（若是折扣券）是基于【会员折后价】来算的，双重优惠不叠加。
-                if (totalAmount.compareTo(coupon.getThreshold()) >= 0) {
-                    if (coupon.getType() == 1) {
-                        // 满减
-                        couponDiscount = coupon.getAmount();
-                    } else if (coupon.getType() == 2) {
-                        // 折扣：amount = 0.9 表示 9 折
-                        couponDiscount = amountAfterMember.multiply(
-                                BigDecimal.ONE.subtract(coupon.getAmount()));
-                    }
-                    effectiveUserCouponId = userCouponId;
+                    && !LocalDateTime.now(ZoneId.systemDefault()).isBefore(coupon.getStartTime())
+                    && !LocalDateTime.now(ZoneId.systemDefault()).isAfter(coupon.getEndTime())
+                    && totalAmount.compareTo(coupon.getThreshold()) >= 0) {
+                if (coupon.getType() == 1) {
+                    couponDiscount = coupon.getAmount();
+                } else if (coupon.getType() == 2) {
+                    couponDiscount = amountAfterMember.multiply(
+                            BigDecimal.ONE.subtract(coupon.getAmount()));
                 }
+                effectiveUserCouponId = userCouponId;
             }
         }
 
@@ -172,12 +174,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (payAmount.compareTo(BigDecimal.ZERO) < 0) payAmount = BigDecimal.ZERO;
 
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("totalAmount", totalAmount);
-        result.put("discountAmount", discountAmount);
+        result.put(TOTAL_AMOUNT, totalAmount);
+        result.put(DISCOUNT_AMOUNT, discountAmount);
         result.put("memberDiscount", memberDiscount);
         result.put("couponDiscount", couponDiscount);
-        result.put("payAmount", payAmount);
-        result.put("couponId", effectiveUserCouponId);
+        result.put(PAY_AMOUNT, payAmount);
+        result.put(COUPON_ID, effectiveUserCouponId);
         result.put("addressId", addressId);
         return result;
     }
@@ -265,8 +267,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             if (userCoupon.getStatus() != null && userCoupon.getStatus() != 0) throw new BusinessException("优惠券已使用或已过期");
             Coupon coupon = couponMapper.selectById(userCoupon.getCouponId());
             if (coupon == null || coupon.getStatus() != 1
-                    || LocalDateTime.now().isBefore(coupon.getStartTime())
-                    || LocalDateTime.now().isAfter(coupon.getEndTime())) {
+                    || LocalDateTime.now(ZoneId.systemDefault()).isBefore(coupon.getStartTime())
+                    || LocalDateTime.now(ZoneId.systemDefault()).isAfter(coupon.getEndTime())) {
                 throw new BusinessException("优惠券不在有效期");
             }
             // 再次校验规则：门槛按原价算，折扣基于会员折后价
@@ -284,7 +286,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                     .eq(UserCoupon::getId, userCouponId)
                     .eq(UserCoupon::getStatus, 0)
                     .set(UserCoupon::getStatus, 1)
-                    .set(UserCoupon::getUsedTime, LocalDateTime.now()));
+                    .set(UserCoupon::getUsedTime, LocalDateTime.now(ZoneId.systemDefault())));
             if (rows != 1) {
                 throw new BusinessException("优惠券已被使用");
             }
@@ -295,7 +297,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         BigDecimal totalPayAmount = totalOrderAmount.subtract(totalCouponDiscount).subtract(totalMemberDiscount);
         if (totalPayAmount.compareTo(BigDecimal.ZERO) < 0) totalPayAmount = BigDecimal.ZERO;
 
-        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        String today = LocalDate.now(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         List<Long> orderIds = new ArrayList<>();
         List<String> orderNos = new ArrayList<>();
 
@@ -505,7 +507,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 .eq(Order::getStatus, 0)
                 .set(Order::getStatus, 1)
                 .set(Order::getPayType, payType != null ? payType : 1)
-                .set(Order::getPayTime, LocalDateTime.now()));
+                .set(Order::getPayTime, LocalDateTime.now(ZoneId.systemDefault())));
         if (paidRows != 1) {
             throw new BusinessException("订单状态不允许支付（可能已支付或已取消）");
         }
@@ -586,7 +588,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                     .eq(Order::getStatus, 0)
                     .set(Order::getStatus, 1)
                     .set(Order::getPayType, payType != null ? payType : 1)
-                    .set(Order::getPayTime, LocalDateTime.now()));
+                    .set(Order::getPayTime, LocalDateTime.now(ZoneId.systemDefault())));
             if (paidRows != 1) {
                 throw new BusinessException("订单状态不允许支付（id=" + order.getId() + "，可能已支付或已取消）");
             }
@@ -670,7 +672,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         int from = order.getStatus();
         OrderStatus.checkTransition(from, 2);
         order.setStatus(2);
-        order.setShipTime(LocalDateTime.now());
+        order.setShipTime(LocalDateTime.now(ZoneId.systemDefault()));
         if (courierCompany != null) order.setCourierCompany(courierCompany);
         if (trackingNumber != null) order.setTrackingNumber(trackingNumber);
         this.updateById(order);
@@ -689,7 +691,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         int from = order.getStatus();
         OrderStatus.checkTransition(from, 3);
         order.setStatus(3);
-        order.setReceiveTime(LocalDateTime.now());
+        order.setReceiveTime(LocalDateTime.now(ZoneId.systemDefault()));
         this.updateById(order);
         saveStatusLog(order.getId(), from, 3, userId, "USER", "用户确认收货");
 
@@ -733,7 +735,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Override
     @Transactional
     public int cancelTimeoutOrders(int timeoutMinutes) {
-        LocalDateTime deadline = LocalDateTime.now().minusMinutes(timeoutMinutes);
+        LocalDateTime deadline = LocalDateTime.now(ZoneId.systemDefault()).minusMinutes(timeoutMinutes);
         // 待支付(0) 且创建时间早于截止点的订单（MQ 漏网单的兜底扫描）
         List<Order> expired = this.list(new LambdaQueryWrapper<Order>()
                 .eq(Order::getStatus, 0)
@@ -786,11 +788,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             vo.put("shopId", order.getShopId());
             Shop shop = shopMapper.selectById(order.getShopId());
             vo.put("shopName", shop != null ? shop.getName() : "");
-            vo.put("totalAmount", order.getTotalAmount());
-            vo.put("discountAmount", order.getDiscountAmount());
-            vo.put("payAmount", order.getPayAmount());
-            vo.put("couponId", order.getCouponId());
-            vo.put("status", order.getStatus());
+            vo.put(TOTAL_AMOUNT, order.getTotalAmount());
+            vo.put(DISCOUNT_AMOUNT, order.getDiscountAmount());
+            vo.put(PAY_AMOUNT, order.getPayAmount());
+            vo.put(COUPON_ID, order.getCouponId());
+            vo.put(STATUS, order.getStatus());
             vo.put("statusName", OrderStatus.of(order.getStatus()) != null
                     ? OrderStatus.of(order.getStatus()).getDesc() : "未知");
             vo.put("payType", order.getPayType());
@@ -833,11 +835,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         // 查店铺名称
         Shop shop = shopMapper.selectById(order.getShopId());
         vo.put("shopName", shop != null ? shop.getName() : "");
-        vo.put("totalAmount", order.getTotalAmount());
-        vo.put("discountAmount", order.getDiscountAmount());
-        vo.put("payAmount", order.getPayAmount());
-        vo.put("couponId", order.getCouponId());
-        vo.put("status", order.getStatus());
+        vo.put(TOTAL_AMOUNT, order.getTotalAmount());
+        vo.put(DISCOUNT_AMOUNT, order.getDiscountAmount());
+        vo.put(PAY_AMOUNT, order.getPayAmount());
+        vo.put(COUPON_ID, order.getCouponId());
+        vo.put(STATUS, order.getStatus());
         vo.put("statusName", OrderStatus.of(order.getStatus()) != null
                 ? OrderStatus.of(order.getStatus()).getDesc() : "未知");
         vo.put("payType", order.getPayType());
@@ -879,7 +881,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         Map<String, Object> rf = new LinkedHashMap<>();
         rf.put("id", refund.getId());
         rf.put("refundNo", refund.getRefundNo());
-        rf.put("status", refund.getStatus());
+        rf.put(STATUS, refund.getStatus());
         rf.put("refundType", refund.getRefundType());
         rf.put("received", refund.getReceived());
         rf.put("amount", refund.getAmount());

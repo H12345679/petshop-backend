@@ -62,7 +62,7 @@ public class LogAspect {
 
         String className = joinPoint.getTarget().getClass().getName();
         String methodName = signature.getName();
-        sysLog.setMethod(className + “.” + methodName + “()”);
+        sysLog.setMethod(className + "." + methodName + "()");
 
         extractParams(joinPoint, sysLog);
 
@@ -84,20 +84,20 @@ public class LogAspect {
                 sysLog.setParams(params.length() > 2000 ? params.substring(0, 2000) : params);
             }
         } catch (Exception e) {
-            sysLog.setParams(“无法序列化参数”);
+            sysLog.setParams("无法序列化参数");
         }
     }
 
     private void extractUserInfo(HttpServletRequest request, SysLog sysLog) {
-        String token = request.getHeader(“Authorization”);
-        if (token != null && token.startsWith(“Bearer “)) {
+        String token = request.getHeader("Authorization");
+        if (token != null && token.startsWith("Bearer ")) {
             token = token.substring(7);
             try {
                 Claims claims = jwtUtil.parseToken(token);
-                sysLog.setUserId(claims.get(“userId”, Long.class));
+                sysLog.setUserId(claims.get("userId", Long.class));
                 sysLog.setUsername(claims.get(USERNAME, String.class));
             } catch (Exception e) {
-                sysLog.setUsername(“未知用户”);
+                sysLog.setUsername("未知用户");
             }
         }
 
@@ -106,18 +106,18 @@ public class LogAspect {
                 JsonNode jsonNode = objectMapper.readTree(sysLog.getParams());
                 if (jsonNode != null && jsonNode.has(USERNAME)) {
                     sysLog.setUsername(jsonNode.get(USERNAME).asText());
-                } else if (jsonNode != null && jsonNode.has(“phone”)) {
-                    sysLog.setUsername(jsonNode.get(“phone”).asText());
+                } else if (jsonNode != null && jsonNode.has("phone")) {
+                    sysLog.setUsername(jsonNode.get("phone").asText());
                 } else {
-                    sysLog.setUsername(“未登录用户”);
+                    sysLog.setUsername("未登录用户");
                 }
             } catch (Exception e) {
-                sysLog.setUsername(“未登录用户”);
+                sysLog.setUsername("未登录用户");
             }
         }
 
         if (sysLog.getUsername() == null) {
-            sysLog.setUsername(“未知用户”);
+            sysLog.setUsername("未知用户");
         }
     }
 }
