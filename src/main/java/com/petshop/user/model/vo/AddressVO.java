@@ -2,12 +2,16 @@ package com.petshop.user.model.vo;
 
 import lombok.Data;
 
+import com.petshop.common.annotation.Desensitize;
+import com.petshop.common.annotation.DesensitizeType;
+
 /** 收货地址响应 */
 @Data
 public class AddressVO {
 
     private Long id;
     private String receiver;
+    @Desensitize(DesensitizeType.PHONE)
     private String phone;
     private String province;
     private String city;
