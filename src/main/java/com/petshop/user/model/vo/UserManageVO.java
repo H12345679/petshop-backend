@@ -5,6 +5,9 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+import com.petshop.common.annotation.Desensitize;
+import com.petshop.common.annotation.DesensitizeType;
+
 /** 后台用户管理列表响应 */
 @Data
 public class UserManageVO {
@@ -13,7 +16,9 @@ public class UserManageVO {
     private String username;
     private String nickname;
     private String avatar;
+    @Desensitize(DesensitizeType.PHONE)
     private String phone;
+    @Desensitize(DesensitizeType.EMAIL)
     private String email;
     /** 0未知 1男 2女 */
     private Integer gender;

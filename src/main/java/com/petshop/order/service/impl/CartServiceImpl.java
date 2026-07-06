@@ -123,64 +123,85 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
 
         List<Map<String, Object>> resultList = new ArrayList<>();
         for (CartItem item : userCartItems) {
-            Map<String, Object> cartItemDetail = new LinkedHashMap<>();
-            cartItemDetail.put("id", item.getId());
-            cartItemDetail.put("userId", item.getUserId());
-            cartItemDetail.put("productId", item.getProductId());
-            cartItemDetail.put("skuId", item.getSkuId());
-            cartItemDetail.put("quantity", item.getQuantity());
-            cartItemDetail.put("selected", item.getSelected());
-            cartItemDetail.put("createTime", item.getCreateTime());
-
-            // 聚合关联的商品基础信息
-            Product product = productMapper.selectById(item.getProductId());
-            if (product != null) {
-                cartItemDetail.put("productName", product.getName());
-                cartItemDetail.put("productImage", product.getMainImage());
-                cartItemDetail.put("productStatus", product.getStatus());
-                cartItemDetail.put("shopId", product.getShopId());
-                // 根据商品的 shopId 查询关联的店铺名称，方便前端在购物车按店铺分组显示
-                Shop shop = shopMapper.selectById(product.getShopId());
-                cartItemDetail.put("shopName", shop != null ? shop.getName() : "");
-            }
-
-            // 获取具体的规格信息，并关联实时的价格与库存数据
-            int isValid = 1; // 标识该商品当前是否仍可购买（1：可购买，0：已失效）
-            if (item.getSkuId() != null && item.getSkuId() != 0) {
-                ProductSku sku = productSkuMapper.selectById(item.getSkuId());
-                if (sku != null) {
-                    cartItemDetail.put("specName", sku.getSpecName());
-                    // price为划线原价（与订单和结算逻辑统一）
-                    cartItemDetail.put("price", sku.getPrice());
-                    // memberPrice为会员折后价，等于 原价 * 会员折扣率
-                    cartItemDetail.put("memberPrice", sku.getPrice() != null ? sku.getPrice().multiply(membershipDiscountRate) : null);
-                    cartItemDetail.put("stock", sku.getStock());
-                    cartItemDetail.put("skuDeleted", sku.getDeleted());
-                    // 如果规格已经被删除，则标记购物车内的该商品为失效状态
-                    if (sku.getDeleted() != null && sku.getDeleted() == 1) isValid = 0;
-                } else {
-                    isValid = 0;
-                    cartItemDetail.put("skuDeleted", 1);
-                }
-            } else {
-                // 如果商品没有多规格属性，则直接使用主商品的价格和库存
-                if (product != null) {
-                    cartItemDetail.put("specName", "");
-                    cartItemDetail.put("price", product.getPrice());
-                    cartItemDetail.put("memberPrice", product.getPrice() != null ? product.getPrice().multiply(membershipDiscountRate) : null);
-                    cartItemDetail.put("stock", product.getStock());
-                }
-            }
-
-            // 如果主商品已经被删除或手动下架，同样标记为失效
-            if (product == null || product.getStatus() == null || product.getStatus() != 1) {
-                isValid = 0;
-            }
-
-            cartItemDetail.put("valid", isValid);
-            resultList.add(cartItemDetail);
+            resultList.add(buildCartItemDetail(item, membershipDiscountRate));
         }
         return resultList;
+    }
+
+    /** 构建单个购物车条目的详情 Map（含商品/规格/价格/有效性） */
+    private Map<String, Object> buildCartItemDetail(CartItem item, BigDecimal membershipDiscountRate) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("id", item.getId());
+        detail.put("userId", item.getUserId());
+        detail.put("productId", item.getProductId());
+        detail.put("skuId", item.getSkuId());
+        detail.put("quantity", item.getQuantity());
+        detail.put("selected", item.getSelected());
+        detail.put("createTime", item.getCreateTime());
+
+        // 聚合关联的商品基础信息
+        Product product = productMapper.selectById(item.getProductId());
+        fillProductInfo(detail, product);
+
+        // 获取具体的规格信息，并关联实时的价格与库存数据
+        int isValid = fillSkuAndPriceInfo(detail, item, product, membershipDiscountRate);
+
+        // 如果主商品已经被删除或手动下架，同样标记为失效
+        if (product == null || product.getStatus() == null || product.getStatus() != 1) {
+            isValid = 0;
+        }
+        detail.put("valid", isValid);
+        return detail;
+    }
+
+    /** 填充商品基础信息（名称/主图/状态/店铺名） */
+    private void fillProductInfo(Map<String, Object> detail, Product product) {
+        if (product == null) return;
+        detail.put("productName", product.getName());
+        detail.put("productImage", product.getMainImage());
+        detail.put("productStatus", product.getStatus());
+        detail.put("shopId", product.getShopId());
+        // 根据商品的 shopId 查询关联的店铺名称，方便前端在购物车按店铺分组显示
+        Shop shop = shopMapper.selectById(product.getShopId());
+        detail.put("shopName", shop != null ? shop.getName() : "");
+    }
+
+    /**
+     * 填充 SKU/价格/库存信息，返回有效性标志（1=可购买，0=已失效）
+     */
+    private int fillSkuAndPriceInfo(Map<String, Object> detail, CartItem item,
+                                    Product product, BigDecimal membershipDiscountRate) {
+        if (item.getSkuId() != null && item.getSkuId() != 0) {
+            return fillWithSkuPrice(detail, item.getSkuId(), membershipDiscountRate);
+        }
+        // 如果商品没有多规格属性，则直接使用主商品的价格和库存
+        if (product != null) {
+            detail.put("specName", "");
+            detail.put("price", product.getPrice());
+            detail.put("memberPrice", product.getPrice() != null
+                    ? product.getPrice().multiply(membershipDiscountRate) : null);
+            detail.put("stock", product.getStock());
+        }
+        return 1;
+    }
+
+    /** 根据 skuId 填充规格价格信息，返回有效性标志 */
+    private int fillWithSkuPrice(Map<String, Object> detail, Long skuId, BigDecimal membershipDiscountRate) {
+        ProductSku sku = productSkuMapper.selectById(skuId);
+        if (sku == null) {
+            detail.put("skuDeleted", 1);
+            return 0;
+        }
+        detail.put("specName", sku.getSpecName());
+        // price为划线原价（与订单和结算逻辑统一）
+        detail.put("price", sku.getPrice());
+        // memberPrice为会员折后价，等于 原价 * 会员折扣率
+        detail.put("memberPrice", sku.getPrice() != null
+                ? sku.getPrice().multiply(membershipDiscountRate) : null);
+        detail.put("stock", sku.getStock());
+        detail.put("skuDeleted", sku.getDeleted());
+        // 如果规格已经被删除，则标记购物车内的该商品为失效状态
+        return (sku.getDeleted() != null && sku.getDeleted() == 1) ? 0 : 1;
     }
 
     // ========== 内部方法 ==========

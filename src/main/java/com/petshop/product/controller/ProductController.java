@@ -10,7 +10,6 @@ import com.petshop.security.RequireRole;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import com.petshop.common.annotation.TrackBehavior;
-import com.petshop.log.annotation.LogOperation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 

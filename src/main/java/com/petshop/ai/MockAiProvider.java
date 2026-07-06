@@ -47,6 +47,9 @@ public class MockAiProvider implements AiProvider {
                     Thread.sleep(30); // 每个字停顿 30ms
                 }
                 onComplete.run();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                onError.accept(e);
             } catch (Exception e) {
                 onError.accept(e);
             }

@@ -28,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
@@ -82,21 +83,12 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
 
         // 2) 订单状态校验：只有处于【待收货】、【已收货】、【已评价】这三种售后期的订单，才允许发起退单申请
         int currentStatus = order.getStatus();
-        if (currentStatus != 2 && currentStatus != 3 && currentStatus != 4) {
-            throw new BusinessException("当前订单状态不可申请退款（" + statusDesc(currentStatus) + "）");
-        }
+        validateRefundableStatus(currentStatus);
 
         // 3) 智能纠错与类型判定 (type 1:仅退款, 2:退货退款)
-        int type = (refundType != null && refundType == 2) ? 2 : 1;
-        // 如果订单处于待收货状态，并且用户声明“未收到货”（比如快递丢了），那说明用户手里根本没实物可退，此时必须强制走“仅退款”
-        int recv = (currentStatus == 2 && received != null && received == 0) ? 0 : 1;
-        if (recv == 0) {
-            type = 1;
-        }
-        // 反之，如果订单都已经评价了，说明货肯定已经收到并拆开用了，此时想退款只能走“退货退款”把实物寄回来
-        if (currentStatus == 4 && type != 2) {
-            throw new BusinessException("已评价的订单退款必须退货，请选择退货退款");
-        }
+        int[] typeAndRecv = determineRefundTypeAndReceived(currentStatus, refundType, received);
+        int type = typeAndRecv[0];
+        int recv = typeAndRecv[1];
 
         // 4) 金额防刷校验：不管用户填多少，退款金额绝不能超过当时买东西时实际掏的钱
         BigDecimal refundAmount = (amount != null && amount.compareTo(order.getPayAmount()) <= 0)
@@ -111,20 +103,20 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         refund.setReason(reason);
         refund.setDescription(description);
         refund.setImages(toJsonArray(images));
-        refund.setType(1);   // 1代表是“用户自己发起的申请”
+        refund.setType(1);   // 1代表是"用户自己发起的申请"
         refund.setRefundType(type);
         refund.setReceived(recv);
         refund.setStatus(0); // 申请中
         this.save(refund);
 
-        // 6) 冻结主订单：先把主订单原本的状态（比如“待收货”）备份到 prevStatus 里，然后将其标记为 -2 (退款售后中)。
-        // 这样可以防止用户在退款扯皮期间，又手贱去点击“确认收货”或者“去评价”，从而避免整个交易状态乱套。
+        // 6) 冻结主订单：先把主订单原本的状态（比如"待收货"）备份到 prevStatus 里，然后将其标记为 -2 (退款售后中)。
+        // 这样可以防止用户在退款扯皮期间，又手贱去点击"确认收货"或者"去评价"，从而避免整个交易状态乱套。
         order.setPrevStatus(currentStatus);
         order.setStatus(-2);
         orderMapper.updateById(order);
 
         // 7) 记录操作日志，留档备查
-        String logRemark = (type == 2 ? "[退货退款] " : (recv == 0 ? "[仅退款·未收到货] " : "[仅退款] ")) + reason;
+        String logRemark = resolveRefundLabel(type, recv) + reason;
         saveStatusLog(orderId, currentStatus, -2, userId, "USER", logRemark);
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -152,78 +144,12 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         if (order == null) throw new BusinessException("关联订单不存在");
         ownershipChecker.assertOrderOwned(order.getId());
 
-        if (status != null && status == 1) { // 商家点击了【同意】按钮
-            boolean needReturn = refund.getRefundType() != null && refund.getRefundType() == 2;
-
-            if (needReturn) {
-                // ===== 场景 A：【退货退款】 =====
-                // 商家虽然同意了，但现在还不能直接退钱。必须让退单进入等待环节，等用户把货找快递寄回来。
-                refund.setStatus(3); // 3: 待用户退货
-                refund.setAuditUserId(operatorId);
-                refund.setAuditTime(LocalDateTime.now());
-                refund.setAuditRemark(auditRemark);
-                this.updateById(refund);
-
-                // 主订单继续保持被冻结的 -2 状态，在此环节只追加一条日志
-                saveStatusLog(order.getId(), -2, -2, operatorId, role,
-                        "同意退货，待用户寄回并填写退货单号" + (auditRemark != null && !auditRemark.isEmpty() ? "：" + auditRemark : ""));
-            } else {
-                // ===== 场景 B：【仅退款】 =====
-                // 这种情况下（无论是快递丢了还是质量问题只退钱），商家一点同意，无需寄快递，直接执行财务打款流程！
-                int from = order.getStatus();
-                OrderStatus.checkTransition(from, -3);
-
-                BigDecimal refundAmount = refund.getAmount();
-                if (refundAmount.compareTo(order.getPayAmount()) > 0) {
-                    refundAmount = order.getPayAmount(); // 最后的防御性编程：退款金额绝不可能大于实付
-                }
-                
-                // 执行真实的财务打款动作（本项目中是直接退回给用户的虚拟余额）
-                refundToBalance(order, refundAmount);
-
-                // 更新退款工单状态为已完成(1)
-                refund.setStatus(1);
-                refund.setAuditUserId(operatorId);
-                refund.setAuditTime(LocalDateTime.now());
-                refund.setAuditRemark(auditRemark);
-                this.updateById(refund);
-
-                // 更新主订单状态为彻底终结(-3：退款关闭)
-                order.setStatus(-3);
-                orderMapper.updateById(order);
-
-                saveStatusLog(order.getId(), from, -3, operatorId, role, auditRemark);
-                
-                // 因为交易取消了，所以要把当初扣掉的商品库存重新还回去，好让别的用户还能买
-                rollbackStock(order.getId());
-            }
-
+        if (status != null && status == 1) {
+            // 商家点击了【同意】按钮
+            handleApproveRefund(refund, order, operatorId, role, auditRemark);
         } else {
-            // ===== 场景 C：商家【驳回（拒绝）】退款请求 =====
-            int from = order.getStatus();
-            Integer prev = order.getPrevStatus();
-            
-            // 确保我们还能找到退款前的状态，否则没法恢复
-            if (prev == null || (prev != 2 && prev != 3 && prev != 4)) {
-                throw new BusinessException("订单数据异常，无法恢复原状态");
-            }
-            OrderStatus.checkTransition(from, prev);
-
-            // 1. 退单盖上“已拒绝”的印章
-            refund.setStatus(2); // 审核拒绝
-            refund.setAuditUserId(operatorId);
-            refund.setAuditTime(LocalDateTime.now());
-            refund.setAuditRemark(auditRemark);
-            this.updateById(refund);
-
-            // 2. 【核心动作：解冻主订单】
-            // 把之前备份的 prevStatus 取出来还原给订单，同时清空备份字段。
-            // 这样订单就又变回“待收货”或“已收货”了，生命周期继续往下走。
-            order.setStatus(prev);
-            order.setPrevStatus(null);
-            orderMapper.updateById(order);
-
-            saveStatusLog(order.getId(), from, prev, operatorId, role, "驳回：" + auditRemark);
+            // 商家【驳回（拒绝）】退款请求
+            handleRejectRefund(refund, order, operatorId, role, auditRemark);
         }
     }
 
@@ -245,7 +171,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
 
         refund.setReturnCourierCompany(courierCompany);
         refund.setReturnTrackingNumber(trackingNumber.trim());
-        refund.setReturnTime(LocalDateTime.now());
+        refund.setReturnTime(LocalDateTime.now(ZoneId.systemDefault()));
         refund.setStatus(4); // 待商家确认收货
         this.updateById(refund);
 
@@ -282,7 +208,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         refund.setStatus(1); // 已退款(结束)
         if (remark != null && !remark.trim().isEmpty()) {
             String old = refund.getAuditRemark();
-            refund.setAuditRemark((old != null && !old.isEmpty() ? old + "；" : "") + "确认收货：" + remark.trim());
+            refund.setAuditRemark((old != null && !old.isEmpty() ? old + ";" : "") + "确认收货：" + remark.trim());
         }
         this.updateById(refund);
 
@@ -310,7 +236,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
 
         int currentStatus = order.getStatus();
         if (currentStatus != 3) {
-            throw new BusinessException("已收货的订单才可直接退单（当前：" + statusDesc(currentStatus) + "）");
+            throw new BusinessException("已收货的订单才可直接退单（当前：" + statusDesc(currentStatus) + ")");
         }
         OrderStatus.checkTransition(currentStatus, -4);
 
@@ -325,7 +251,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         refund.setReceived(1);
         refund.setStatus(1);     // 已退
         refund.setAuditUserId(operatorId);
-        refund.setAuditTime(LocalDateTime.now());
+        refund.setAuditTime(LocalDateTime.now(ZoneId.systemDefault()));
         refund.setAuditRemark(reason);
         this.save(refund);
 
@@ -356,7 +282,153 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
     }
 
     @Override
-    public PageResult<Map<String, Object>> managePage(int current, int size, Long shopId, Integer status, String refundNo, String username) {
+    public PageResult<Map<String, Object>> managePage(int current, int size, Long shopId,
+                                                      Integer status, String refundNo, String username) {
+        LambdaQueryWrapper<Refund> wrapper = buildRefundQueryWrapper(status, refundNo, username);
+        Page<Refund> page = this.page(new Page<>(current, size), wrapper);
+
+        List<Long> shopIds = ownershipChecker.myShopIds();
+        List<Map<String, Object>> records = new ArrayList<>();
+
+        for (Refund r : page.getRecords()) {
+            Map<String, Object> vo = buildRefundRecord(r, shopIds);
+            if (vo != null) {
+                records.add(vo);
+            }
+        }
+
+        PageResult<Map<String, Object>> pr = new PageResult<>();
+        pr.setTotal(shopIds != null ? records.size() : page.getTotal());
+        pr.setPages(shopIds != null ? 1 : page.getPages());
+        pr.setCurrent(current);
+        pr.setSize(size);
+        pr.setRecords(records);
+        return pr;
+    }
+
+    // ========== 内部辅助方法 ==========
+
+    /** 校验订单状态是否允许申请退款 */
+    private void validateRefundableStatus(int currentStatus) {
+        if (currentStatus != 2 && currentStatus != 3 && currentStatus != 4) {
+            throw new BusinessException("当前订单状态不可申请退款（" + statusDesc(currentStatus) + "）");
+        }
+    }
+
+    /** 智能判定退款类型(1仅退款/2退货退款)和收货状态 */
+    private int[] determineRefundTypeAndReceived(int currentStatus, Integer refundType, Integer received) {
+        int type = (refundType != null && refundType == 2) ? 2 : 1;
+        // 如果订单处于待收货状态，并且用户声明"未收到货"（比如快递丢了），强制走"仅退款"
+        int recv = (currentStatus == 2 && received != null && received == 0) ? 0 : 1;
+        if (recv == 0) {
+            type = 1;
+        }
+        // 如果订单都已经评价了，说明货肯定已经收到，此时只能走"退货退款"
+        if (currentStatus == 4 && type != 2) {
+            throw new BusinessException("已评价的订单退款必须退货，请选择退货退款");
+        }
+        return new int[]{type, recv};
+    }
+
+    /** 返回退款类型对应的日志标签 */
+    private String resolveRefundLabel(int type, int recv) {
+        if (type == 2) {
+            return "[退货退款] ";
+        }
+        if (recv == 0) {
+            return "[仅退款·未收到货] ";
+        }
+        return "[仅退款] ";
+    }
+
+    /** 商家同意退款：根据是否需要退货，分派到不同处理流程 */
+    private void handleApproveRefund(Refund refund, Order order,
+                                     Long operatorId, String role, String auditRemark) {
+        boolean needReturn = refund.getRefundType() != null && refund.getRefundType() == 2;
+        if (needReturn) {
+            handleApproveReturn(refund, order, operatorId, role, auditRemark);
+        } else {
+            handleApproveRefundOnly(refund, order, operatorId, role, auditRemark);
+        }
+    }
+
+    /** 场景A：退货退款 -- 商家同意退货，等待用户寄回 */
+    private void handleApproveReturn(Refund refund, Order order,
+                                     Long operatorId, String role, String auditRemark) {
+        refund.setStatus(3); // 3: 待用户退货
+        refund.setAuditUserId(operatorId);
+        refund.setAuditTime(LocalDateTime.now(ZoneId.systemDefault()));
+        refund.setAuditRemark(auditRemark);
+        this.updateById(refund);
+
+        // 主订单继续保持被冻结的 -2 状态，在此环节只追加一条日志
+        String remarkSuffix = (auditRemark != null && !auditRemark.isEmpty()) ? "：" + auditRemark : "";
+        saveStatusLog(order.getId(), -2, -2, operatorId, role,
+                "同意退货，待用户寄回并填写退货单号" + remarkSuffix);
+    }
+
+    /** 场景B：仅退款 -- 商家同意，直接执行退款打款 */
+    private void handleApproveRefundOnly(Refund refund, Order order,
+                                         Long operatorId, String role, String auditRemark) {
+        int from = order.getStatus();
+        OrderStatus.checkTransition(from, -3);
+
+        BigDecimal refundAmount = refund.getAmount();
+        if (refundAmount.compareTo(order.getPayAmount()) > 0) {
+            refundAmount = order.getPayAmount(); // 最后的防御性编程：退款金额绝不可能大于实付
+        }
+
+        // 执行真实的财务打款动作（本项目中是直接退回给用户的虚拟余额）
+        refundToBalance(order, refundAmount);
+
+        // 更新退款工单状态为已完成(1)
+        refund.setStatus(1);
+        refund.setAuditUserId(operatorId);
+        refund.setAuditTime(LocalDateTime.now(ZoneId.systemDefault()));
+        refund.setAuditRemark(auditRemark);
+        this.updateById(refund);
+
+        // 更新主订单状态为彻底终结(-3：退款关闭)
+        order.setStatus(-3);
+        orderMapper.updateById(order);
+
+        saveStatusLog(order.getId(), from, -3, operatorId, role, auditRemark);
+
+        // 因为交易取消了，所以要把当初扣掉的商品库存重新还回去，好让别的用户还能买
+        rollbackStock(order.getId());
+    }
+
+    /** 场景C：驳回退款请求，恢复订单原状态 */
+    private void handleRejectRefund(Refund refund, Order order,
+                                    Long operatorId, String role, String auditRemark) {
+        int from = order.getStatus();
+        Integer prev = order.getPrevStatus();
+
+        // 确保我们还能找到退款前的状态，否则没法恢复
+        if (prev == null || (prev != 2 && prev != 3 && prev != 4)) {
+            throw new BusinessException("订单数据异常，无法恢复原状态");
+        }
+        OrderStatus.checkTransition(from, prev);
+
+        // 1. 退单盖上"已拒绝"的印章
+        refund.setStatus(2); // 审核拒绝
+        refund.setAuditUserId(operatorId);
+        refund.setAuditTime(LocalDateTime.now(ZoneId.systemDefault()));
+        refund.setAuditRemark(auditRemark);
+        this.updateById(refund);
+
+        // 2. 【核心动作：解冻主订单】
+        // 把之前备份的 prevStatus 取出来还原给订单，同时清空备份字段。
+        // 这样订单就又变回"待收货"或"已收货"了，生命周期继续往下走。
+        order.setStatus(prev);
+        order.setPrevStatus(null);
+        orderMapper.updateById(order);
+
+        saveStatusLog(order.getId(), from, prev, operatorId, role, "驳回：" + auditRemark);
+    }
+
+    /** 构建退款列表查询条件 */
+    private LambdaQueryWrapper<Refund> buildRefundQueryWrapper(Integer status, String refundNo, String username) {
         LambdaQueryWrapper<Refund> wrapper = new LambdaQueryWrapper<>();
         if (status != null) {
             wrapper.eq(Refund::getStatus, status);
@@ -365,96 +437,106 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
             wrapper.eq(Refund::getRefundNo, refundNo);
         }
         if (username != null && !username.isEmpty()) {
-            List<User> users = userMapper.selectList(
-                    new LambdaQueryWrapper<User>()
-                            .like(User::getUsername, username)
-                            .or()
-                            .like(User::getNickname, username));
-            if (users != null && !users.isEmpty()) {
-                List<Long> uids = new ArrayList<>();
-                for (User u : users) {
-                    uids.add(u.getId());
-                }
-                wrapper.in(Refund::getUserId, uids);
-            } else {
-                wrapper.eq(Refund::getId, -1L);
-            }
+            applyUsernameFilter(wrapper, username);
         }
         wrapper.orderByDesc(Refund::getCreateTime);
-        Page<Refund> page = this.page(new Page<>(current, size), wrapper);
-
-        List<Long> shopIds = ownershipChecker.myShopIds();
-        List<Map<String, Object>> records = new ArrayList<>();
-        long total = page.getTotal();
-
-        for (Refund r : page.getRecords()) {
-            // 查关联订单
-            Order order = orderMapper.selectById(r.getOrderId());
-            if (order == null) continue;
-            // MERCHANT 按店铺过滤
-            if (shopIds != null && !shopIds.contains(order.getShopId())) continue;
-
-            Map<String, Object> vo = new LinkedHashMap<>();
-            vo.put("id", r.getId());
-            vo.put("refundNo", r.getRefundNo());
-            vo.put("orderId", r.getOrderId());
-            vo.put("orderNo", order.getOrderNo());
-            vo.put("userId", r.getUserId());
-            // 买家名
-            User user = userMapper.selectById(r.getUserId());
-            vo.put("buyerName", user != null ? (user.getNickname() != null ? user.getNickname() : user.getUsername()) : "用户#" + r.getUserId());
-            vo.put("amount", r.getAmount());
-            vo.put("reason", r.getReason());
-            vo.put("description", r.getDescription());
-            vo.put("images", r.getImages());
-            vo.put("type", r.getType());
-            vo.put("refundType", r.getRefundType());
-            vo.put("received", r.getReceived());
-            vo.put("status", r.getStatus());
-            vo.put("auditRemark", r.getAuditRemark());
-            vo.put("auditTime", r.getAuditTime());
-            vo.put("returnCourierCompany", r.getReturnCourierCompany());
-            vo.put("returnTrackingNumber", r.getReturnTrackingNumber());
-            vo.put("returnTime", r.getReturnTime());
-            // 已评价订单退款的特别提示（申请退款前订单处于 4-已评价）
-            vo.put("reviewed", order.getPrevStatus() != null && order.getPrevStatus() == 4);
-            vo.put("createTime", r.getCreateTime());
-
-            // 查订单明细，计算可退上限 & 商品名
-            LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
-            oiWrapper.eq(OrderItem::getOrderId, order.getId());
-            List<OrderItem> items = orderItemMapper.selectList(oiWrapper);
-            BigDecimal maxRefund = BigDecimal.ZERO;
-            String productName = "—";
-            if (!items.isEmpty()) {
-                OrderItem firstItem = items.get(0);
-                productName = firstItem.getProductName() != null ? firstItem.getProductName() : "商品";
-                if (items.size() > 1) productName += " 等" + items.size() + "件";
-                for (OrderItem oi : items) {
-                    BigDecimal rpa = oi.getRealPayAmount() != null ? oi.getRealPayAmount() : BigDecimal.ZERO;
-                    maxRefund = maxRefund.add(rpa);
-                }
-            }
-            vo.put("productName", productName);
-            vo.put("maxRefund", maxRefund);
-
-            records.add(vo);
-        }
-
-        PageResult<Map<String, Object>> pr = new PageResult<>();
-        pr.setTotal(shopIds != null ? records.size() : total);
-        pr.setPages(shopIds != null ? 1 : page.getPages());
-        pr.setCurrent(current);
-        pr.setSize(size);
-        pr.setRecords(records);
-        return pr;
+        return wrapper;
     }
 
-    // ========== 内部 ==========
+    /** 按用户名/昵称模糊匹配过滤退款记录 */
+    private void applyUsernameFilter(LambdaQueryWrapper<Refund> wrapper, String username) {
+        List<User> users = userMapper.selectList(
+                new LambdaQueryWrapper<User>()
+                        .like(User::getUsername, username)
+                        .or()
+                        .like(User::getNickname, username));
+        if (users != null && !users.isEmpty()) {
+            List<Long> uids = new ArrayList<>();
+            for (User u : users) {
+                uids.add(u.getId());
+            }
+            wrapper.in(Refund::getUserId, uids);
+        } else {
+            wrapper.eq(Refund::getId, -1L);
+        }
+    }
+
+    /** 构建单条退款记录的VO Map；若关联订单不存在或不属于当前商家则返回null */
+    private Map<String, Object> buildRefundRecord(Refund r, List<Long> shopIds) {
+        Order order = orderMapper.selectById(r.getOrderId());
+        if (order == null) {
+            return null;
+        }
+        // MERCHANT 按店铺过滤
+        if (shopIds != null && !shopIds.contains(order.getShopId())) {
+            return null;
+        }
+
+        Map<String, Object> vo = new LinkedHashMap<>();
+        vo.put("id", r.getId());
+        vo.put("refundNo", r.getRefundNo());
+        vo.put("orderId", r.getOrderId());
+        vo.put("orderNo", order.getOrderNo());
+        vo.put("userId", r.getUserId());
+        // 买家名
+        User user = userMapper.selectById(r.getUserId());
+        vo.put("buyerName", resolveBuyerName(user, r.getUserId()));
+        vo.put("amount", r.getAmount());
+        vo.put("reason", r.getReason());
+        vo.put("description", r.getDescription());
+        vo.put("images", r.getImages());
+        vo.put("type", r.getType());
+        vo.put("refundType", r.getRefundType());
+        vo.put("received", r.getReceived());
+        vo.put("status", r.getStatus());
+        vo.put("auditRemark", r.getAuditRemark());
+        vo.put("auditTime", r.getAuditTime());
+        vo.put("returnCourierCompany", r.getReturnCourierCompany());
+        vo.put("returnTrackingNumber", r.getReturnTrackingNumber());
+        vo.put("returnTime", r.getReturnTime());
+        // 已评价订单退款的特别提示（申请退款前订单处于 4-已评价）
+        vo.put("reviewed", order.getPrevStatus() != null && order.getPrevStatus() == 4);
+        vo.put("createTime", r.getCreateTime());
+
+        // 查订单明细，计算可退上限 & 商品名
+        populateOrderItems(vo, order.getId());
+        return vo;
+    }
+
+    /** 解析买家显示名称 */
+    private String resolveBuyerName(User user, Long userId) {
+        if (user == null) {
+            return "用户#" + userId;
+        }
+        return user.getNickname() != null ? user.getNickname() : user.getUsername();
+    }
+
+    /** 查订单明细，填充商品名和可退上限到VO */
+    private void populateOrderItems(Map<String, Object> vo, Long orderId) {
+        LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
+        oiWrapper.eq(OrderItem::getOrderId, orderId);
+        List<OrderItem> items = orderItemMapper.selectList(oiWrapper);
+
+        BigDecimal maxRefund = BigDecimal.ZERO;
+        String productName = "—";
+        if (!items.isEmpty()) {
+            OrderItem firstItem = items.get(0);
+            productName = firstItem.getProductName() != null ? firstItem.getProductName() : "商品";
+            if (items.size() > 1) {
+                productName += " 等" + items.size() + "件";
+            }
+            for (OrderItem oi : items) {
+                BigDecimal rpa = oi.getRealPayAmount() != null ? oi.getRealPayAmount() : BigDecimal.ZERO;
+                maxRefund = maxRefund.add(rpa);
+            }
+        }
+        vo.put("productName", productName);
+        vo.put("maxRefund", maxRefund);
+    }
 
     /** 生成退单号：RFD + yyyyMMdd + 毫秒后6位 */
     private String nextRefundNo() {
-        return REFUND_NO_PREFIX + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"))
+        return REFUND_NO_PREFIX + LocalDate.now(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyyMMdd"))
                 + String.format("%06d", System.currentTimeMillis() % 1000000);
     }
 

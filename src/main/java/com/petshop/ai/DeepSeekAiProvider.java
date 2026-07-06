@@ -36,6 +36,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @ConditionalOnProperty(prefix = "ai", name = "provider", havingValue = "deepseek")
 public class DeepSeekAiProvider implements AiProvider {
 
+    private static final String CONTENT = "content";
+
     @Value("${ai.deepseek.api-key}")
     private String apiKey;
 
@@ -83,8 +85,8 @@ public class DeepSeekAiProvider implements AiProvider {
             Map<String, Object> body = Map.of(
                 "model", model,
                 "messages", List.of(
-                    Map.of("role", "system", "content", sysPrompt),
-                    Map.of("role", "user", "content", question)
+                    Map.of("role", "system", CONTENT, sysPrompt),
+                    Map.of("role", "user", CONTENT, question)
                 ),
                 "temperature", 0.7,
                 "max_tokens", 1000
@@ -132,8 +134,8 @@ public class DeepSeekAiProvider implements AiProvider {
             Map<String, Object> bodyMap = Map.of(
                 "model", model,
                 "messages", List.of(
-                    Map.of("role", "system", "content", sysPrompt),
-                    Map.of("role", "user", "content", question)
+                    Map.of("role", "system", CONTENT, sysPrompt),
+                    Map.of("role", "user", CONTENT, question)
                 ),
                 "temperature", 0.7,
                 "max_tokens", 1000,
@@ -174,28 +176,8 @@ public class DeepSeekAiProvider implements AiProvider {
                         if ("[DONE]".equals(data)) {
                             break;
                         }
-                        if (data.isEmpty()) {
-                            continue;
-                        }
-                        try {
-                            com.fasterxml.jackson.databind.JsonNode root = mapper.readTree(data);
-                            com.fasterxml.jackson.databind.JsonNode choices = root.path("choices");
-                            if (choices.isArray() && choices.size() > 0) {
-                                com.fasterxml.jackson.databind.JsonNode delta = choices.get(0).path("delta");
-                                
-                                // 处理正文内容
-                                if (delta.has("content")) {
-                                    onMessage.accept(delta.get("content").asText());
-                                }
-                                // 处理思考过程（DeepSeek 可能会有 reasoning_content）
-                                else if (delta.has("reasoning_content")) {
-                                    // 我们也可以将思考过程推给前端，或者暂时忽略。
-                                    // 这里为了不让前端干等，把思考过程也输出（可以加个括号标识）
-                                    // onMessage.accept(delta.get("reasoning_content").asText());
-                                }
-                            }
-                        } catch (Exception ex) {
-                            log.error("解析 SSE 数据行失败: {}", line, ex);
+                        if (!data.isEmpty()) {
+                            processSseData(data, mapper, onMessage);
                         }
                     }
                 }
@@ -203,9 +185,27 @@ public class DeepSeekAiProvider implements AiProvider {
 
             onComplete.run();
 
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            onError.accept(e);
         } catch (Exception e) {
             log.error("DeepSeek API 流式调用异常", e);
             onError.accept(e);
+        }
+    }
+
+    private void processSseData(String data, ObjectMapper mapper, Consumer<String> onMessage) {
+        try {
+            JsonNode root = mapper.readTree(data);
+            JsonNode choices = root.path("choices");
+            if (choices.isArray() && !choices.isEmpty()) {
+                JsonNode delta = choices.get(0).path("delta");
+                if (delta.has(CONTENT)) {
+                    onMessage.accept(delta.get(CONTENT).asText());
+                }
+            }
+        } catch (Exception ex) {
+            log.error("解析 SSE 数据行失败: {}", data, ex);
         }
     }
 

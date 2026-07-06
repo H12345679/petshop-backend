@@ -27,12 +27,33 @@ public class JwtInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        if (!(handler instanceof HandlerMethod)) {
+        if (!(handler instanceof HandlerMethod hm)) {
             return true;
         }
-        HandlerMethod hm = (HandlerMethod) handler;
 
-        // 尝试解析 Token（无论是否强制要求登录，有合法 Token 就把用户信息放入上下文）
+        trySetUserContext(request);
+
+        RequireLogin requireLogin = getAnnotation(hm, RequireLogin.class);
+        RequireRole requireRole = getAnnotation(hm, RequireRole.class);
+
+        if (requireLogin == null && requireRole == null) {
+            return true;
+        }
+
+        if (UserContext.getUserId() == null) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED);
+        }
+
+        String role = UserContext.getRole();
+        if (requireRole != null) {
+            if (role == null || !Arrays.asList(requireRole.value()).contains(role)) {
+                throw new BusinessException(ResultCode.FORBIDDEN);
+            }
+        }
+        return true;
+    }
+
+    private void trySetUserContext(HttpServletRequest request) {
         String token = request.getHeader("Authorization");
         if (token != null && token.startsWith("Bearer ")) {
             token = token.substring(7);
@@ -45,40 +66,9 @@ public class JwtInterceptor implements HandlerInterceptor {
                 String role = claims.get("role", String.class);
                 UserContext.set(new UserContext.LoginUser(userId, username, role));
             } catch (Exception e) {
-                // Token 无效：对公开接口宽容（忽略无效 token），对强制登录接口严格
+                // Token 无效时忽略，后续按是否需要登录决定是否报错
             }
         }
-
-        RequireLogin requireLogin = getAnnotation(hm, RequireLogin.class);
-        RequireRole requireRole = getAnnotation(hm, RequireRole.class);
-
-        // 公开接口直接放行（即使无 token / token 无效也放行）
-        if (requireLogin == null && requireRole == null) {
-            return true;
-        }
-
-        // 强制登录接口：必须有合法 token
-        if (UserContext.getUserId() == null) {
-            throw new BusinessException(ResultCode.UNAUTHORIZED);
-        }
-
-        // 从 ThreadLocal (全局上下文) 中获取当前登录用户的角色，比如 "USER", "ADMIN", "MERCHANT"
-        String role = UserContext.getRole();
-        
-        // 如果当前访问的接口贴了 @RequireRole 标签（说明这是一个需要特定角色才能访问的接口）
-        if (requireRole != null) {
-            // requireRole.value() 拿到的是标签里允许的角色数组，比如 {"ADMIN", "MERCHANT"}
-            // 将其转成 List，然后检查当前用户的 role 在不在这个允许的列表里
-            boolean allowed = role != null && Arrays.asList(requireRole.value()).contains(role);
-            
-            // 如果用户的角色不在允许列表里（也就是 allowed 为 false）
-            if (!allowed) {
-                // 抛出 403 异常，拒绝访问。
-                // 此时前端会收到类似 "无权访问该资源" 的提示。
-                throw new BusinessException(ResultCode.FORBIDDEN);
-            }
-        }
-        return true;
     }
 
     @Override
