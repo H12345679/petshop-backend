@@ -111,7 +111,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     public Map<String, Object> preSettle(List<Map<String, Object>> items, Long userCouponId, Long addressId) {
         Long userId = requireUserId();
         if (items == null || items.isEmpty()) {
-            throw new BusinessException(“购买项不能为空”);
+            throw new BusinessException("购买项不能为空");
         }
 
         BigDecimal totalAmount = calculateItemsTotal(items);
@@ -140,11 +140,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         Map<String, Object> result = new LinkedHashMap<>();
         result.put(TOTAL_AMOUNT, totalAmount);
         result.put(DISCOUNT_AMOUNT, discountAmount);
-        result.put(“memberDiscount”, memberDiscount);
-        result.put(“couponDiscount”, couponDiscount);
+        result.put("memberDiscount", memberDiscount);
+        result.put("couponDiscount", couponDiscount);
         result.put(PAY_AMOUNT, payAmount);
         result.put(COUPON_ID, effectiveUserCouponId);
-        result.put(“addressId”, addressId);
+        result.put("addressId", addressId);
         return result;
     }
 
@@ -152,12 +152,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     @Override
     @Transactional
-    @SuppressWarnings(“unchecked”)
+    @SuppressWarnings("unchecked")
     public Map<String, Object> createOrder(String requestId, Long userCouponId, Long addressId,
                                            List<Map<String, Object>> items, String remark) {
         Long userId = requireUserId();
         if (items == null || items.isEmpty()) {
-            throw new BusinessException(“购买项不能为空”);
+            throw new BusinessException("购买项不能为空");
         }
 
         Map<String, Object> cached = checkIdempotency(requestId);
@@ -182,7 +182,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         BigDecimal totalPayAmount = totalOrderAmount.subtract(couponResult.discount).subtract(totalMemberDiscount);
         if (totalPayAmount.compareTo(BigDecimal.ZERO) < 0) totalPayAmount = BigDecimal.ZERO;
 
-        String today = LocalDate.now(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern(“yyyyMMdd”));
+        String today = LocalDate.now(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         List<Long> orderIds = new ArrayList<>();
         List<String> orderNos = new ArrayList<>();
 
@@ -192,10 +192,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put(“orderIds”, orderIds);
-        result.put(“orderNos”, orderNos);
-        result.put(“totalPayAmount”, totalPayAmount);
-        result.put(“requestId”, requestId);
+        result.put("orderIds", orderIds);
+        result.put("orderNos", orderNos);
+        result.put("totalPayAmount", totalPayAmount);
+        result.put("requestId", requestId);
         cacheIdempotentResult(requestId, result);
         return result;
     }
