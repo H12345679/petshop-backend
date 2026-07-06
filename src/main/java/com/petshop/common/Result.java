@@ -2,21 +2,16 @@ package com.petshop.common;
 
 import lombok.Data;
 
-import java.io.Serializable;
-
 /**
  * 统一返回体。所有 Controller 一律返回 Result<T>。
  */
 @Data
-public class Result<T> implements Serializable {
+public class Result<T> {
 
     private Integer code;
     private String message;
     private T data;
     private long timestamp = System.currentTimeMillis();
-
-    public Result() {
-    }
 
     public Result(Integer code, String message, T data) {
         this.code = code;
