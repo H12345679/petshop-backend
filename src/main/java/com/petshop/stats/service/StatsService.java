@@ -12,4 +12,7 @@ public interface StatsService {
     List<Map<String, Object>> getOrderStatus();
     List<Map<String, Object>> getMemberLevel();
     List<Map<String, Object>> getProductSales(Integer limit);
+    List<Map<String, Object>> getDailyStats(Integer days);
+    Map<String, Object> getLogOps(Integer days);
+    List<Map<String, Object>> getShopRanking(Integer limit);
 }

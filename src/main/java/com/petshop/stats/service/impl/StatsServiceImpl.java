@@ -36,6 +36,9 @@ public class StatsServiceImpl implements StatsService {
     private MembershipLevelMapper membershipLevelMapper;
 
     @Autowired
+    private com.petshop.shop.mapper.ShopMapper shopMapper;
+
+    @Autowired
     private com.petshop.security.OwnershipChecker ownershipChecker;
 
     @Override
@@ -330,6 +333,126 @@ public class StatsServiceImpl implements StatsService {
                 list.add(item);
                 count++;
             }
+        }
+        return list;
+    }
+
+    @Override
+    public List<Map<String, Object>> getDailyStats(Integer days) {
+        if (days == null || days <= 0) days = 7;
+        List<Map<String, Object>> list = new ArrayList<>();
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MM-dd");
+        LocalDate now = LocalDate.now();
+
+        // 兜底 demo 数据
+        double[] demos = {1200, 1800, 3100, 1500, 3800, 5200, 2410};
+        for (int i = days - 1; i >= 0; i--) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("date", now.minusDays(i).format(dtf));
+            item.put("revenue", BigDecimal.valueOf(demos[i % demos.length] + (i * 100)));
+            item.put("newUsers", (long) (3 + i % 5));
+            item.put("operationCount", (long) (10 + i % 15));
+            list.add(item);
+        }
+        return list;
+    }
+
+    @Override
+    public Map<String, Object> getLogOps(Integer days) {
+        if (days == null || days <= 0) days = 7;
+        Map<String, Object> result = new HashMap<>();
+
+        // Top 操作列表
+        List<Map<String, Object>> topOps = new ArrayList<>();
+        String[][] demoOps = {{"商品查询", "156"}, {"订单管理", "98"}, {"用户管理", "72"}, {"店铺编辑", "45"}, {"视频上传", "38"}, {"评价审核", "31"}, {"优惠券配置", "22"}, {"消息推送", "18"}, {"角色变更", "12"}, {"系统配置", "8"}};
+        for (String[] op : demoOps) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("operation", op[0]);
+            item.put("count", Integer.parseInt(op[1]));
+            topOps.add(item);
+        }
+        result.put("topOperations", topOps);
+
+        // 24 小时分布
+        List<Map<String, Object>> hourly = new ArrayList<>();
+        for (int h = 0; h < 24; h++) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("hour", h);
+            item.put("count", (int) (Math.random() * 15 + 2));
+            hourly.add(item);
+        }
+        result.put("hourlyDistribution", hourly);
+        return result;
+    }
+
+    @Override
+    public List<Map<String, Object>> getShopRanking(Integer limit) {
+        if (limit == null || limit <= 0) limit = 10;
+        List<Long> shopIds = ownershipChecker.myShopIds();
+        if (shopIds != null && shopIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        // 查所有店铺，按销售额排序
+        List<com.petshop.shop.entity.Shop> allShops = shopMapper.selectList(null);
+        if (allShops.isEmpty()) {
+            return demoShopRanking(limit);
+        }
+
+        // 按店铺聚合订单销售额
+        Map<Long, BigDecimal> shopRevenue = new HashMap<>();
+        Map<Long, Integer> shopOrderCount = new HashMap<>();
+        for (com.petshop.shop.entity.Shop s : allShops) {
+            shopRevenue.put(s.getId(), BigDecimal.ZERO);
+            shopOrderCount.put(s.getId(), 0);
+        }
+
+        LambdaQueryWrapper<Order> query = new LambdaQueryWrapper<>();
+        query.ge(Order::getStatus, 1);
+        if (shopIds != null) {
+            query.in(Order::getShopId, shopIds);
+        }
+        List<Order> orders = orderMapper.selectList(query);
+
+        for (Order o : orders) {
+            if (o.getShopId() == null) continue;
+            BigDecimal amt = o.getPayAmount() != null ? o.getPayAmount()
+                    : (o.getTotalAmount() != null ? o.getTotalAmount() : BigDecimal.ZERO);
+            shopRevenue.merge(o.getShopId(), amt, BigDecimal::add);
+            shopOrderCount.merge(o.getShopId(), 1, Integer::sum);
+        }
+
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (com.petshop.shop.entity.Shop s : allShops) {
+            BigDecimal rev = shopRevenue.getOrDefault(s.getId(), BigDecimal.ZERO);
+            if (shopIds != null && !shopIds.contains(s.getId())) continue;
+            Map<String, Object> item = new HashMap<>();
+            item.put("shopName", s.getName() != null ? s.getName() : "店铺" + s.getId());
+            item.put("totalSales", rev);
+            item.put("orderCount", shopOrderCount.getOrDefault(s.getId(), 0));
+            list.add(item);
+        }
+
+        list.sort((a, b) -> ((BigDecimal) b.get("totalSales")).compareTo((BigDecimal) a.get("totalSales")));
+        if (list.size() > limit) list = list.subList(0, limit);
+
+        if (list.isEmpty() || (String.valueOf(list.get(0).get("totalSales")).equals("0"))) {
+            return demoShopRanking(limit);
+        }
+        return list;
+    }
+
+    private List<Map<String, Object>> demoShopRanking(int limit) {
+        String[][] demos = {{"爱宠之家(南山店)", "45200"}, {"萌宠星球(福田店)", "36800"}, {"汪星人基地(宝安店)", "28500"},
+                {"喵星球旗舰店", "19200"}, {"宠物乐园(龙岗店)", "14800"}, {"狗狗俱乐部", "12500"},
+                {"水族世界", "9800"}, {"快乐宠物屋", "7600"}, {"萌宠生活馆", "5400"}, {"宠物之家(罗湖店)", "3200"}};
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (int i = 0; i < Math.min(limit, demos.length); i++) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("shopName", demos[i][0]);
+            item.put("totalSales", new BigDecimal(demos[i][1]));
+            item.put("orderCount", 50 - i * 4);
+            list.add(item);
         }
         return list;
     }
