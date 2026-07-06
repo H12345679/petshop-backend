@@ -51,7 +51,7 @@ public class MockDataController {
             
             // 插入用户
             jdbcTemplate.update(
-                "INSERT INTO user (id, username, password, nickname, role, status, create_time, update_time, deleted) VALUES (?, ?, '123456', ?, 'USER', 1, NOW(), NOW(), 0)",
+                "INSERT INTO user (id, username, password, nickname, role, status, create_time, update_time, deleted) VALUES (?, ?, '$2a$10$0UlSviT.aZbhHVFNNVgqU.oPOlgznSSCZH.98rSwKS020//.Y2aOm', ?, 'USER', 1, NOW(), NOW(), 0)",
                 userId, username, nickname
             );
 

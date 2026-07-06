@@ -78,9 +78,15 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
      */
     private void syncScoresFromBehavior() {
         List<Map<String, Object>> agg = jdbcTemplate.queryForList(
-                "SELECT user_id, product_id, " +
-                "SUM(CASE behavior_type WHEN 1 THEN 1 WHEN 2 THEN 3 WHEN 3 THEN 4 WHEN 4 THEN 5 ELSE 0 END) AS score " +
-                "FROM user_behavior WHERE deleted = 0 GROUP BY user_id, product_id");
+                "SELECT ub.user_id, ub.product_id, " +
+                "LEAST(" +
+                "COUNT(DISTINCT CASE WHEN ub.behavior_type = 1 THEN DATE(ub.create_time) END) * 1.0 + " +
+                "SUM(CASE ub.behavior_type WHEN 2 THEN 3.0 WHEN 3 THEN 4.0 WHEN 4 THEN 5.0 ELSE 0.0 END), " +
+                "5.0) AS score " +
+                "FROM user_behavior ub " +
+                "JOIN user u ON ub.user_id = u.id " +
+                "WHERE ub.deleted = 0 AND u.role = 'USER' AND ub.user_id != 2 " +
+                "GROUP BY ub.user_id, ub.product_id");
 
         List<Object[]> args = new ArrayList<>();
         for (Map<String, Object> row : agg) {
