@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -97,7 +98,7 @@ public class EmailAuthServiceImpl implements EmailAuthService {
             }
 
             // 更新最后登录时间
-            user.setLastLoginTime(LocalDateTime.now());
+            user.setLastLoginTime(LocalDateTime.now(ZoneId.systemDefault()));
             userMapper.updateById(user);
 
             // 签发 JWT
@@ -123,7 +124,7 @@ public class EmailAuthServiceImpl implements EmailAuthService {
         user.setBalance(BigDecimal.ZERO);
         user.setPoints(0);
         user.setStatus(1);
-        user.setLastLoginTime(LocalDateTime.now());
+        user.setLastLoginTime(LocalDateTime.now(ZoneId.systemDefault()));
 
         userMapper.insert(user);
         return user;

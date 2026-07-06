@@ -158,10 +158,9 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
             throw new BusinessException("发行总量最大不能超过 100,000 张");
         }
         // 如果是折扣券(type=2)，折扣率不能超过 0.99 (即 9.9 折)
-        if (coupon.getType() != null && coupon.getType() == 2) {
-            if (coupon.getAmount() == null || coupon.getAmount().compareTo(new java.math.BigDecimal("0.99")) > 0) {
-                throw new BusinessException("折扣率不能大于 0.99");
-            }
+        if (coupon.getType() != null && coupon.getType() == 2
+                && (coupon.getAmount() == null || coupon.getAmount().compareTo(new java.math.BigDecimal("0.99")) > 0)) {
+            throw new BusinessException("折扣率不能大于 0.99");
         }
         coupon.setId(null);
         // 新建优惠券时，初始的剩余库存(remain)默认等于发行总量(total)
@@ -180,12 +179,11 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
         if (coupon.getTotal() != null && coupon.getTotal() > 100000) {
             throw new BusinessException("发行总量最大不能超过 100,000 张");
         }
-        if (coupon.getType() != null && coupon.getType() == 2) {
-            if (coupon.getAmount() == null || coupon.getAmount().compareTo(new java.math.BigDecimal("0.99")) > 0) {
-                throw new BusinessException("折扣率不能大于 0.99");
-            }
+        if (coupon.getType() != null && coupon.getType() == 2
+                && (coupon.getAmount() == null || coupon.getAmount().compareTo(new java.math.BigDecimal("0.99")) > 0)) {
+            throw new BusinessException("折扣率不能大于 0.99");
         }
-        
+
         Coupon existingCoupon = this.getById(id);
         if (existingCoupon == null) {
             throw new BusinessException(ResultCode.NOT_FOUND);

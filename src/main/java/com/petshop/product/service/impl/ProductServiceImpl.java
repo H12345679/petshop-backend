@@ -221,77 +221,97 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     @Override
     public PageResult<Product> pageProducts(ProductPageQuery query) {
         LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
-        // 条件式：值为 null/空 时该条件不生效（前台一般只传 status=1）
 
         // MERCHANT 只看自己名下店铺的商品；ADMIN/null 不过滤
-        // 若 query 已指定 shopId，取交集（MERCHANT 只能查自己店铺的）
-        List<Long> shopIds = ownershipChecker.myShopIds();
-        if (shopIds != null && !shopIds.isEmpty()) {
-            if (query.getShopId() != null) {
-                // MERCHANT 指定了 shopId → 必须在名下店铺范围内
-                if (!shopIds.contains(query.getShopId())) {
-                    return new PageResult<>(); // 越权查别人店铺 → 返回空页
-                }
-                w.eq(Product::getShopId, query.getShopId());
-            } else {
-                w.in(Product::getShopId, shopIds);
-            }
-        } else if (shopIds != null) {
-            // MERCHANT 无店铺 → 返回空
-            return new PageResult<>();
-        } else {
-            w.eq(query.getShopId() != null, Product::getShopId, query.getShopId());
+        if (applyShopFilter(w, query)) {
+            return new PageResult<>(); // 越权或无店铺 → 返回空页
         }
 
         // 多门店 IN 过滤（商家后台用，逗号分隔的 shopIds）
-        if (query.getShopId() == null && StringUtils.hasText(query.getShopIds())) {
-            java.util.List<Long> ids = new java.util.ArrayList<>();
-            for (String s : query.getShopIds().split(",")) {
-                try { ids.add(Long.parseLong(s.trim())); } catch (NumberFormatException ignored) {}
-            }
-            if (!ids.isEmpty()) {
-                w.in(Product::getShopId, ids);
-            }
-        }
+        applyMultiShopFilter(w, query);
 
+        // 条件式：值为 null/空 时该条件不生效
         w.eq(query.getCategoryId() != null, Product::getCategoryId, query.getCategoryId());
-
         w.like(StringUtils.hasText(query.getName()), Product::getName, query.getName());
-
         w.eq(query.getType() != null, Product::getType, query.getType());
-
         w.eq(query.getStatus() != null, Product::getStatus, query.getStatus());
-
         w.ge(query.getMinPrice() != null, Product::getPrice, query.getMinPrice());
         w.le(query.getMaxPrice() != null, Product::getPrice, query.getMaxPrice());
 
-        if ("sales_desc".equals(query.getSort())) {
-            w.orderByDesc(Product::getSales);
-        } else if ("price_asc".equals(query.getSort())) {
-            w.orderByAsc(Product::getPrice);
-        } else if ("price_desc".equals(query.getSort())) {
-            w.orderByDesc(Product::getPrice);
-        } else if ("new".equals(query.getSort())) {
-            w.orderByDesc(Product::getCreateTime);
-        } else if ("recommend".equals(query.getSort())) {
-            // 基于用户画像标签的个性化推荐排序
-            List<Long> recIds = getRecommendProductIds(query.toPage().getSize() * 2);
-            if (!recIds.isEmpty()) {
-                // 推荐的商品排在最前面，其余按销量降序兜底
-                String idsStr = recIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
-                w.last("ORDER BY FIELD(id," + idsStr + ") DESC, sales DESC");
-            } else {
-                w.orderByDesc(Product::getSales);
-            }
-        } else {
-            w.orderByDesc(Product::getCreateTime);
-        }
+        applySortOrder(w, query);
 
         Page<Product> pageInfo = this.page(query.toPage(), w);
         if (pageInfo.getRecords() != null) {
             applyDiscountAndShopName(pageInfo.getRecords());
         }
         return PageResult.of(pageInfo);
+    }
+
+    /**
+     * 应用店铺归属过滤。
+     * @return true 表示应直接返回空页（越权或商家无店铺）
+     */
+    private boolean applyShopFilter(LambdaQueryWrapper<Product> w, ProductPageQuery query) {
+        List<Long> shopIds = ownershipChecker.myShopIds();
+        if (shopIds != null && !shopIds.isEmpty()) {
+            if (query.getShopId() != null) {
+                if (!shopIds.contains(query.getShopId())) {
+                    return true;
+                }
+                w.eq(Product::getShopId, query.getShopId());
+            } else {
+                w.in(Product::getShopId, shopIds);
+            }
+        } else if (shopIds != null) {
+            return true;
+        } else {
+            w.eq(query.getShopId() != null, Product::getShopId, query.getShopId());
+        }
+        return false;
+    }
+
+    /** 多门店逗号分隔 shopIds 过滤 */
+    private void applyMultiShopFilter(LambdaQueryWrapper<Product> w, ProductPageQuery query) {
+        if (query.getShopId() != null || !StringUtils.hasText(query.getShopIds())) {
+            return;
+        }
+        java.util.List<Long> ids = new java.util.ArrayList<>();
+        for (String s : query.getShopIds().split(",")) {
+            try { ids.add(Long.parseLong(s.trim())); } catch (NumberFormatException ignored) { /* non-numeric shopId token skipped */ }
+        }
+        if (!ids.isEmpty()) {
+            w.in(Product::getShopId, ids);
+        }
+    }
+
+    /** 应用排序规则 */
+    private void applySortOrder(LambdaQueryWrapper<Product> w, ProductPageQuery query) {
+        String sort = query.getSort();
+        if ("sales_desc".equals(sort)) {
+            w.orderByDesc(Product::getSales);
+        } else if ("price_asc".equals(sort)) {
+            w.orderByAsc(Product::getPrice);
+        } else if ("price_desc".equals(sort)) {
+            w.orderByDesc(Product::getPrice);
+        } else if ("new".equals(sort)) {
+            w.orderByDesc(Product::getCreateTime);
+        } else if ("recommend".equals(sort)) {
+            applyRecommendSort(w, query);
+        } else {
+            w.orderByDesc(Product::getCreateTime);
+        }
+    }
+
+    /** 推荐排序：基于用户画像标签的个性化推荐，无推荐结果则按销量降序 */
+    private void applyRecommendSort(LambdaQueryWrapper<Product> w, ProductPageQuery query) {
+        List<Long> recIds = getRecommendProductIds(query.toPage().getSize() * 2);
+        if (!recIds.isEmpty()) {
+            String idsStr = recIds.stream().map(String::valueOf)
+                    .collect(java.util.stream.Collectors.joining(","));
+            w.last("ORDER BY FIELD(id," + idsStr + ") DESC, sales DESC");
+        } else {
+            w.orderByDesc(Product::getSales);
+        }
     }
 
     @Override
@@ -302,50 +322,63 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         if ("RECOMMEND".equalsIgnoreCase(strategy)) {
             return recommendProducts(n);
         }
-
-        LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
-        w.eq(Product::getStatus, 1);   // 首页只展示「上架」商品
-        boolean isCfFallback = false;
         if ("NEW".equalsIgnoreCase(strategy)) {
-            w.orderByDesc(Product::getCreateTime);   // 新鲜上架
-        } else if ("CF".equalsIgnoreCase(strategy)) {
-            Long userId = UserContext.getUserId();
-            if (userId != null) {
-                // 去 recommend_result 里找该用户的推荐商品 ID
-                List<Long> productIds = jdbcTemplate.queryForList(
-                        "SELECT product_id FROM recommend_result WHERE user_id = ? ORDER BY score DESC LIMIT ?",
-                        Long.class, userId, n
-                );
-                if (!productIds.isEmpty()) {
-                    w.in(Product::getId, productIds);
-                    // 确保按 in 的顺序或至少不报错，先简单返回这些数据
-                    // Mybatis Plus 的 in 会打乱顺序，如果不介意这里就直接返回
-                    List<Product> list = this.list(w);
-                    if (list == null) {
-                        list = new java.util.ArrayList<>();
-                    }
-                    
-                    // Step 4 凑数补齐逻辑：如果离线协同过滤推荐数量不足 n 条，去重后用全站错峰销量榜（第2页）凑满
-                    if (list.size() < n) {
-                        LambdaQueryWrapper<Product> hotW = new LambdaQueryWrapper<>();
-                        hotW.eq(Product::getStatus, 1).orderByDesc(Product::getSales);
-                        List<Product> hots = getPageWithFallbackProtection(hotW, n + list.size(), 2);
-                        fillWithDeduplication(list, n, hots);
-                    }
-                    
-                    applyDiscountAndShopName(list);
-                    return list;
-                }
-            }
-            // 兜底：未登录或该用户没有跑过 CF 推荐，错峰取全站销量榜第 2 页，避开第一页的热榜
-            isCfFallback = true;
-            w.orderByDesc(Product::getSales);
-        } else {
-            // HOT / 默认 → 按销量
-            w.orderByDesc(Product::getSales);
+            return homeNewProducts(n);
         }
-        // 取前 N 条：如果是 CF 兜底，错峰取第 2 页避开第一页的热榜；同时应用智能防破窗保护
-        return getPageWithFallbackProtection(w, n, isCfFallback ? 2 : 1);
+        if ("CF".equalsIgnoreCase(strategy)) {
+            return homeCfProducts(n);
+        }
+        // HOT / 默认 → 按销量
+        LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
+        w.eq(Product::getStatus, 1).orderByDesc(Product::getSales);
+        return getPageWithFallbackProtection(w, n, 1);
+    }
+
+    /** 首页「最新上架」策略 */
+    private List<Product> homeNewProducts(int n) {
+        LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
+        w.eq(Product::getStatus, 1).orderByDesc(Product::getCreateTime);
+        return getPageWithFallbackProtection(w, n, 1);
+    }
+
+    /** 首页「协同过滤推荐」策略：登录用户取 CF 推荐结果，未命中则错峰兜底 */
+    private List<Product> homeCfProducts(int n) {
+        Long userId = UserContext.getUserId();
+        if (userId != null) {
+            List<Product> cfResult = fetchCfRecommendations(userId, n);
+            if (cfResult != null) {
+                return cfResult;
+            }
+        }
+        // 兜底：未登录或该用户没有跑过 CF 推荐，错峰取全站销量榜第 2 页
+        LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
+        w.eq(Product::getStatus, 1).orderByDesc(Product::getSales);
+        return getPageWithFallbackProtection(w, n, 2);
+    }
+
+    /** 从 recommend_result 查询 CF 推荐商品，不足时凑数；无数据时返回 null 表示走兜底 */
+    private List<Product> fetchCfRecommendations(Long userId, int n) {
+        List<Long> productIds = jdbcTemplate.queryForList(
+                "SELECT product_id FROM recommend_result WHERE user_id = ? ORDER BY score DESC LIMIT ?",
+                Long.class, userId, n);
+        if (productIds.isEmpty()) {
+            return null;
+        }
+        LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
+        w.eq(Product::getStatus, 1).in(Product::getId, productIds);
+        List<Product> list = this.list(w);
+        if (list == null) {
+            list = new java.util.ArrayList<>();
+        }
+        // 凑数补齐：如果离线协同过滤推荐数量不足 n 条，去重后用全站错峰销量榜凑满
+        if (list.size() < n) {
+            LambdaQueryWrapper<Product> hotW = new LambdaQueryWrapper<>();
+            hotW.eq(Product::getStatus, 1).orderByDesc(Product::getSales);
+            List<Product> hots = getPageWithFallbackProtection(hotW, n + list.size(), 2);
+            fillWithDeduplication(list, n, hots);
+        }
+        applyDiscountAndShopName(list);
+        return list;
     }
 
     private List<Product> recommendProducts(int n) {
@@ -452,38 +485,45 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         if (userId == null) return java.util.Collections.emptyList();
 
         List<Long> result = new java.util.ArrayList<>();
+        // 1. 从 Redis 取用户画像 Top 3 标签对应的商品 ID
+        collectTagBasedProductIds(userId, limit, result);
+        // 2. 从 recommend_result 表补充 CF 推荐
+        collectCfBasedProductIds(userId, limit, result);
+        return result;
+    }
 
-        // 1. 从 Redis 取用户画像 Top 3 标签
+    /** 根据用户画像标签从 product_tag 收集推荐商品 ID */
+    private void collectTagBasedProductIds(Long userId, long limit, List<Long> result) {
         String redisKey = "user_profile:" + userId + ":tags";
         java.util.Set<String> tagIdsStr = stringRedisTemplate.opsForZSet().reverseRange(redisKey, 0, 2);
-
-        if (tagIdsStr != null && !tagIdsStr.isEmpty()) {
-            List<Long> tagIds = new java.util.ArrayList<>();
-            for (String s : tagIdsStr) {
-                try { tagIds.add(Long.parseLong(s)); } catch (NumberFormatException ignored) {}
-            }
-            if (!tagIds.isEmpty()) {
-                List<Long> productIds = productTagMapper.selectProductIdsByTagIds(tagIds);
-                if (productIds != null) {
-                    result.addAll(productIds.subList(0, (int) Math.min(productIds.size(), limit)));
-                }
+        if (tagIdsStr == null || tagIdsStr.isEmpty()) {
+            return;
+        }
+        List<Long> tagIds = new java.util.ArrayList<>();
+        for (String s : tagIdsStr) {
+            try { tagIds.add(Long.parseLong(s)); } catch (NumberFormatException ignored) { /* non-numeric tag skipped */ }
+        }
+        if (!tagIds.isEmpty()) {
+            List<Long> productIds = productTagMapper.selectProductIdsByTagIds(tagIds);
+            if (productIds != null) {
+                result.addAll(productIds.subList(0, (int) Math.min(productIds.size(), limit)));
             }
         }
+    }
 
-        // 2. 从 recommend_result 表补充 CF 推荐
-        if (result.size() < limit) {
-            try {
-                List<Long> cfIds = jdbcTemplate.queryForList(
-                        "SELECT product_id FROM recommend_result WHERE user_id = ? ORDER BY score DESC LIMIT ?",
-                        Long.class, userId, limit - result.size()
-                );
-                for (Long id : cfIds) {
-                    if (!result.contains(id)) result.add(id);
-                }
-            } catch (Exception ignored) {}
+    /** 从 recommend_result 表补充 CF 推荐商品 ID（去重） */
+    private void collectCfBasedProductIds(Long userId, long limit, List<Long> result) {
+        if (result.size() >= limit) {
+            return;
         }
-
-        return result;
+        try {
+            List<Long> cfIds = jdbcTemplate.queryForList(
+                    "SELECT product_id FROM recommend_result WHERE user_id = ? ORDER BY score DESC LIMIT ?",
+                    Long.class, userId, limit - result.size());
+            for (Long id : cfIds) {
+                if (!result.contains(id)) result.add(id);
+            }
+        } catch (Exception ignored) { /* recommend_result table may not exist yet */ }
     }
 
     @Override
@@ -498,37 +538,45 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         }
 
         if (skuId != null) {
-            // 有 SKU
-            ProductSku sku = productSkuMapper.selectById(skuId);
-            if (sku == null || !sku.getProductId().equals(productId)) {
-                throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "商品规格不存在");
-            }
-            if (sku.getStock() < quantity) {
-                throw new BusinessException(ResultCode.ERROR.getCode(), "商品规格库存不足");
-            }
-            // 乐观锁思想扣减库存
-            int updated = productSkuMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ProductSku>()
-                    .setSql("stock = stock - " + quantity)
-                    .eq(ProductSku::getId, skuId)
-                    .ge(ProductSku::getStock, quantity));
-            if (updated == 0) {
-                throw new BusinessException(ResultCode.ERROR.getCode(), "库存扣减失败，已被抢空请重试");
-            }
-            return sku.getPrice();
-        } else {
-            // 无 SKU，扣减主表库存
-            if (product.getStock() < quantity) {
-                throw new BusinessException(ResultCode.ERROR.getCode(), "商品库存不足");
-            }
-            int updated = this.baseMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Product>()
-                    .setSql("stock = stock - " + quantity)
-                    .eq(Product::getId, productId)
-                    .ge(Product::getStock, quantity));
-            if (updated == 0) {
-                throw new BusinessException(ResultCode.ERROR.getCode(), "库存扣减失败，已被抢空请重试");
-            }
-            return product.getPrice();
+            return deductSkuStock(productId, skuId, quantity);
         }
+        return deductProductStock(product, quantity);
+    }
+
+    /** 有 SKU 时校验并扣减 SKU 库存，返回 SKU 单价 */
+    private BigDecimal deductSkuStock(Long productId, Long skuId, int quantity) {
+        ProductSku sku = productSkuMapper.selectById(skuId);
+        if (sku == null || !sku.getProductId().equals(productId)) {
+            throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "商品规格不存在");
+        }
+        if (sku.getStock() < quantity) {
+            throw new BusinessException(ResultCode.ERROR.getCode(), "商品规格库存不足");
+        }
+        int updated = productSkuMapper.update(null,
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ProductSku>()
+                        .setSql("stock = stock - " + quantity)
+                        .eq(ProductSku::getId, skuId)
+                        .ge(ProductSku::getStock, quantity));
+        if (updated == 0) {
+            throw new BusinessException(ResultCode.ERROR.getCode(), "库存扣减失败，已被抢空请重试");
+        }
+        return sku.getPrice();
+    }
+
+    /** 无 SKU 时校验并扣减主表库存，返回商品单价 */
+    private BigDecimal deductProductStock(Product product, int quantity) {
+        if (product.getStock() < quantity) {
+            throw new BusinessException(ResultCode.ERROR.getCode(), "商品库存不足");
+        }
+        int updated = this.baseMapper.update(null,
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Product>()
+                        .setSql("stock = stock - " + quantity)
+                        .eq(Product::getId, product.getId())
+                        .ge(Product::getStock, quantity));
+        if (updated == 0) {
+            throw new BusinessException(ResultCode.ERROR.getCode(), "库存扣减失败，已被抢空请重试");
+        }
+        return product.getPrice();
     }
 
     @Override

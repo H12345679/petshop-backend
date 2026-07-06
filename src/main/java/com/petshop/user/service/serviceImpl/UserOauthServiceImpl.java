@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 @Service
 public class UserOauthServiceImpl implements UserOauthService {
@@ -48,7 +49,7 @@ public class UserOauthServiceImpl implements UserOauthService {
             }
 
             // 更新最后登录时间
-            user.setLastLoginTime(LocalDateTime.now());
+            user.setLastLoginTime(LocalDateTime.now(ZoneId.systemDefault()));
             userMapper.updateById(user);
 
             // 签发 JWT

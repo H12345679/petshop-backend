@@ -24,6 +24,8 @@ import java.util.stream.Collectors;
 @Service
 public class AiChatServiceImpl implements AiChatService {
 
+    private static final String CREATE_TIME = "create_time";
+
     @Autowired
     private AiChatLogMapper aiChatLogMapper;
 
@@ -38,7 +40,7 @@ public class AiChatServiceImpl implements AiChatService {
         org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter = new org.springframework.web.servlet.mvc.method.annotation.SseEmitter(60000L);
 
         QueryWrapper<Product> qw = new QueryWrapper<>();
-        qw.eq("status", 1).orderByDesc("create_time").last("LIMIT 30");
+        qw.eq("status", 1).orderByDesc(CREATE_TIME).last("LIMIT 30");
         List<Product> productList = productMapper.selectList(qw);
         
         StringBuilder contextBuilder = new StringBuilder();
@@ -90,7 +92,7 @@ public class AiChatServiceImpl implements AiChatService {
         QueryWrapper<AiChatLog> qw = new QueryWrapper<>();
         qw.eq("user_id", userId)
           .eq("session_id", sessionId)
-          .orderByAsc("create_time");
+          .orderByAsc(CREATE_TIME);
         return aiChatLogMapper.selectList(qw).stream().map(log -> {
             ChatHistoryVO vo = new ChatHistoryVO();
             BeanUtils.copyProperties(log, vo);
@@ -104,7 +106,7 @@ public class AiChatServiceImpl implements AiChatService {
             return new ArrayList<>();
         }
         QueryWrapper<AiChatLog> qw = new QueryWrapper<>();
-        qw.eq("user_id", userId).orderByAsc("create_time");
+        qw.eq("user_id", userId).orderByAsc(CREATE_TIME);
         List<AiChatLog> allLogs = aiChatLogMapper.selectList(qw);
 
         Map<String, AiSessionVO> map = new LinkedHashMap<>();

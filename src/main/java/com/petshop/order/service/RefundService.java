@@ -1,7 +1,6 @@
 package com.petshop.order.service;
 
 import com.petshop.common.PageResult;
-import com.petshop.order.entity.Refund;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -54,6 +53,7 @@ public interface RefundService {
     void directRefundByOrderIdOrNo(Long orderId, String orderNo, String reason);
 
     /** @deprecated 使用 directRefundByOrderIdOrNo */
+    @Deprecated
     void directRefund(Long orderId, String reason);
 
     /** 后台退单列表分页（ADMIN·MERCHANT，返回含订单/商品/用户信息的Map） */

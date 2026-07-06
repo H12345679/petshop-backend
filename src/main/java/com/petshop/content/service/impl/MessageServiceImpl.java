@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -43,54 +44,9 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
     @Transactional(rollbackFor = Exception.class)
     public void sendMessage(MessageSendDTO dto) {
         if ("MERCHANT".equals(UserContext.getRole())) {
-            if (dto.getType() == 1) {
-                throw new BusinessException(403, "商家无法发送系统通知");
-            }
-            List<Long> shopIds = ownershipChecker.myShopIds();
-            if (shopIds == null || shopIds.isEmpty()) {
-                throw new BusinessException(403, "您尚未绑定任何店铺，无法发送消息");
-            }
-            LambdaQueryWrapper<ShopCustomer> qw = new LambdaQueryWrapper<>();
-            qw.in(ShopCustomer::getShopId, shopIds);
-            qw.select(ShopCustomer::getUserId);
-            List<Long> customerIds = shopCustomerMapper.selectObjs(qw).stream()
-                    .map(o -> Long.valueOf(o.toString()))
-                    .distinct()
-                    .collect(Collectors.toList());
-
-            if (dto.getScope() == 1) {
-                // 商家广播：转为定向发送给所有本店客户
-                if (customerIds.isEmpty()) {
-                    throw new BusinessException(400, "您的店铺暂无历史购买客户，无法广播");
-                }
-                dto.setScope(2);
-                dto.setTargetUserIds(customerIds);
-            } else if (dto.getScope() == 2) {
-                // 商家定向发送：必须是本店客户
-                List<Long> targets = dto.getTargetUserIds();
-                if (targets == null || targets.isEmpty()) {
-                    throw new BusinessException(400, "定向发送必须指定目标用户列表");
-                }
-                for (Long t : targets) {
-                    if (!customerIds.contains(t)) {
-                        throw new BusinessException(403, "只能向购买过您本店商品的用户发送消息");
-                    }
-                }
-            }
-
-            // 自动追加店铺署名与签名
-            Shop shop = shopMapper.selectById(shopIds.get(0));
-            String shopName = (shop != null && shop.getName() != null && !shop.getName().trim().isEmpty()) ? shop.getName() : "品牌商家";
-            String title = dto.getTitle();
-            if (title != null && !title.startsWith("【")) {
-                dto.setTitle("【" + shopName + "】" + title);
-            }
-            String content = dto.getContent();
-            if (content != null && !content.contains("—— 来自店铺：")) {
-                dto.setContent(content + "\n\n—— 来自店铺：「" + shopName + "」");
-            }
+            applyMerchantRestrictions(dto);
         }
-        
+
         Message message = new Message();
         message.setTitle(dto.getTitle());
         message.setContent(dto.getContent());
@@ -98,20 +54,78 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
         message.setScope(dto.getScope());
         this.save(message);
 
-        // 如果是定向发送，直接给这些用户插入未读记录
         if (dto.getScope() == 2) {
-            List<Long> targetIds = dto.getTargetUserIds();
-            if (targetIds == null || targetIds.isEmpty()) {
+            insertTargetUserMessages(message.getId(), dto.getTargetUserIds());
+        }
+    }
+
+    private void applyMerchantRestrictions(MessageSendDTO dto) {
+        if (dto.getType() == 1) {
+            throw new BusinessException(403, "商家无法发送系统通知");
+        }
+        List<Long> shopIds = ownershipChecker.myShopIds();
+        if (shopIds == null || shopIds.isEmpty()) {
+            throw new BusinessException(403, "您尚未绑定任何店铺，无法发送消息");
+        }
+
+        List<Long> customerIds = findShopCustomerIds(shopIds);
+        applyMerchantScope(dto, customerIds);
+        appendShopSignature(dto, shopIds.get(0));
+    }
+
+    private List<Long> findShopCustomerIds(List<Long> shopIds) {
+        LambdaQueryWrapper<ShopCustomer> qw = new LambdaQueryWrapper<>();
+        qw.in(ShopCustomer::getShopId, shopIds);
+        qw.select(ShopCustomer::getUserId);
+        return shopCustomerMapper.selectObjs(qw).stream()
+                .map(o -> Long.valueOf(o.toString()))
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
+    private void applyMerchantScope(MessageSendDTO dto, List<Long> customerIds) {
+        if (dto.getScope() == 1) {
+            if (customerIds.isEmpty()) {
+                throw new BusinessException(400, "您的店铺暂无历史购买客户，无法广播");
+            }
+            dto.setScope(2);
+            dto.setTargetUserIds(customerIds);
+        } else if (dto.getScope() == 2) {
+            List<Long> targets = dto.getTargetUserIds();
+            if (targets == null || targets.isEmpty()) {
                 throw new BusinessException(400, "定向发送必须指定目标用户列表");
             }
-            // 简单循环插入，如果量大应使用批量插入 (insertBatchSomeColumn)
-            for (Long targetUserId : targetIds) {
-                UserMessage um = new UserMessage();
-                um.setMessageId(message.getId());
-                um.setUserId(targetUserId);
-                um.setIsRead(0);
-                userMessageMapper.insert(um);
+            for (Long t : targets) {
+                if (!customerIds.contains(t)) {
+                    throw new BusinessException(403, "只能向购买过您本店商品的用户发送消息");
+                }
             }
+        }
+    }
+
+    private void appendShopSignature(MessageSendDTO dto, Long shopId) {
+        Shop shop = shopMapper.selectById(shopId);
+        String shopName = (shop != null && shop.getName() != null && !shop.getName().trim().isEmpty()) ? shop.getName() : "品牌商家";
+        String title = dto.getTitle();
+        if (title != null && !title.startsWith("【")) {
+            dto.setTitle("【" + shopName + "】" + title);
+        }
+        String content = dto.getContent();
+        if (content != null && !content.contains("—— 来自店铺：")) {
+            dto.setContent(content + "\n\n—— 来自店铺：「" + shopName + "」");
+        }
+    }
+
+    private void insertTargetUserMessages(Long messageId, List<Long> targetIds) {
+        if (targetIds == null || targetIds.isEmpty()) {
+            throw new BusinessException(400, "定向发送必须指定目标用户列表");
+        }
+        for (Long targetUserId : targetIds) {
+            UserMessage um = new UserMessage();
+            um.setMessageId(messageId);
+            um.setUserId(targetUserId);
+            um.setIsRead(0);
+            userMessageMapper.insert(um);
         }
     }
 
@@ -158,7 +172,7 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
         if (um != null) {
             if (um.getIsRead() == 0) {
                 um.setIsRead(1);
-                um.setReadTime(LocalDateTime.now());
+                um.setReadTime(LocalDateTime.now(ZoneId.systemDefault()));
                 userMessageMapper.updateById(um);
             }
         } else {
@@ -169,7 +183,7 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
                 newUm.setMessageId(id);
                 newUm.setUserId(userId);
                 newUm.setIsRead(1);
-                newUm.setReadTime(LocalDateTime.now());
+                newUm.setReadTime(LocalDateTime.now(ZoneId.systemDefault()));
                 userMessageMapper.insert(newUm);
             } else {
                 throw new BusinessException(403, "无权读取该消息");
@@ -194,7 +208,7 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
                 newUm.setMessageId(msgId);
                 newUm.setUserId(userId);
                 newUm.setIsRead(1);
-                newUm.setReadTime(LocalDateTime.now());
+                newUm.setReadTime(LocalDateTime.now(ZoneId.systemDefault()));
                 userMessageMapper.insert(newUm); // 让 MyBatis-Plus 自动为 id 生成 Snowflake ID
             }
         }

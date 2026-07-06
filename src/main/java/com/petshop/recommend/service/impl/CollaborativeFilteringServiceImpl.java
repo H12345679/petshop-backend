@@ -15,10 +15,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Service
 public class CollaborativeFilteringServiceImpl implements CollaborativeFilteringService {
 
+    private static final String USER_ID = "user_id";
+    private static final String PRODUCT_ID = "product_id";
+
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    /** 每个用户最多保留的推荐条数，避免 recommend_result 随 用户×商品 膨胀 */
     private static final int TOP_N_PER_USER = 20;
 
     /** 防止定时任务与手动触发并发跑批（会互相清表） */
@@ -47,8 +49,8 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
             Map<Long, Map<Long, Double>> userItemMap = new HashMap<>();
             Map<Long, Map<Long, Double>> itemUserMap = new HashMap<>();
             for (Map<String, Object> row : rows) {
-                Long userId = ((Number) row.get("user_id")).longValue();
-                Long itemId = ((Number) row.get("product_id")).longValue();
+                Long userId = ((Number) row.get(USER_ID)).longValue();
+                Long itemId = ((Number) row.get(PRODUCT_ID)).longValue();
                 Double score = ((Number) row.get("score")).doubleValue();
                 userItemMap.computeIfAbsent(userId, k -> new HashMap<>()).put(itemId, score);
                 itemUserMap.computeIfAbsent(itemId, k -> new HashMap<>()).put(userId, score);
@@ -85,12 +87,12 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
         List<Object[]> args = new ArrayList<>();
         for (Map<String, Object> row : agg) {
             Object scoreObj = row.get("score");
-            if (scoreObj == null) continue;
-            double score = ((Number) scoreObj).doubleValue();
-            if (score <= 0) continue;
-            Long userId = ((Number) row.get("user_id")).longValue();
-            Long productId = ((Number) row.get("product_id")).longValue();
-            args.add(new Object[]{IdWorker.getId(), userId, productId, score});
+            if (scoreObj != null && ((Number) scoreObj).doubleValue() > 0) {
+                double score = ((Number) scoreObj).doubleValue();
+                Long userId = ((Number) row.get(USER_ID)).longValue();
+                Long productId = ((Number) row.get(PRODUCT_ID)).longValue();
+                args.add(new Object[]{IdWorker.getId(), userId, productId, score});
+            }
         }
         if (!args.isEmpty()) {
             jdbcTemplate.batchUpdate(
@@ -107,7 +109,6 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
         Map<Long, Map<Long, Double>> simMap = new HashMap<>();
         List<Long> targetIds = new ArrayList<>(targetToFeatureMap.keySet());
 
-        // 预计算每个目标的范数（每个目标算一次，避免内层循环里重复计算 O(N^2) 次）
         Map<Long, Double> normMap = new HashMap<>();
         for (Long id : targetIds) {
             normMap.put(id, calculateNorm(targetToFeatureMap.get(id)));
@@ -116,32 +117,46 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
         for (int i = 0; i < targetIds.size(); i++) {
             Long targetA = targetIds.get(i);
             double normA = normMap.get(targetA);
-            if (normA <= 0) continue;
-            Map<Long, Double> featuresA = targetToFeatureMap.get(targetA);
-
-            for (int j = i + 1; j < targetIds.size(); j++) {
-                Long targetB = targetIds.get(j);
-                double normB = normMap.get(targetB);
-                if (normB <= 0) continue;
-                Map<Long, Double> featuresB = targetToFeatureMap.get(targetB);
-
-                // 点积：遍历较小的一方
-                Map<Long, Double> small = featuresA.size() <= featuresB.size() ? featuresA : featuresB;
-                Map<Long, Double> large = (small == featuresA) ? featuresB : featuresA;
-                double dotProduct = 0.0;
-                for (Map.Entry<Long, Double> entry : small.entrySet()) {
-                    Double v = large.get(entry.getKey());
-                    if (v != null) dotProduct += entry.getValue() * v;
-                }
-
-                double similarity = dotProduct / (normA * normB);
-                if (similarity > 0) {
-                    simMap.computeIfAbsent(targetA, k -> new HashMap<>()).put(targetB, similarity);
-                    simMap.computeIfAbsent(targetB, k -> new HashMap<>()).put(targetA, similarity);
-                }
+            if (normA <= 0) {
+                continue;
             }
+            Map<Long, Double> featuresA = targetToFeatureMap.get(targetA);
+            computePairwiseSimilarity(targetIds, i, featuresA, normA, normMap, targetToFeatureMap, simMap);
         }
         return simMap;
+    }
+
+    private void computePairwiseSimilarity(List<Long> targetIds, int i, Map<Long, Double> featuresA, double normA,
+                                           Map<Long, Double> normMap, Map<Long, Map<Long, Double>> targetToFeatureMap,
+                                           Map<Long, Map<Long, Double>> simMap) {
+        Long targetA = targetIds.get(i);
+        for (int j = i + 1; j < targetIds.size(); j++) {
+            Long targetB = targetIds.get(j);
+            double normB = normMap.get(targetB);
+            if (normB <= 0) {
+                continue;
+            }
+            Map<Long, Double> featuresB = targetToFeatureMap.get(targetB);
+            double dotProduct = calculateDotProduct(featuresA, featuresB);
+            double similarity = dotProduct / (normA * normB);
+            if (similarity > 0) {
+                simMap.computeIfAbsent(targetA, k -> new HashMap<>()).put(targetB, similarity);
+                simMap.computeIfAbsent(targetB, k -> new HashMap<>()).put(targetA, similarity);
+            }
+        }
+    }
+
+    private double calculateDotProduct(Map<Long, Double> featuresA, Map<Long, Double> featuresB) {
+        Map<Long, Double> small = featuresA.size() <= featuresB.size() ? featuresA : featuresB;
+        Map<Long, Double> large = (small == featuresA) ? featuresB : featuresA;
+        double dotProduct = 0.0;
+        for (Map.Entry<Long, Double> entry : small.entrySet()) {
+            Double v = large.get(entry.getKey());
+            if (v != null) {
+                dotProduct += entry.getValue() * v;
+            }
+        }
+        return dotProduct;
     }
 
     private double calculateNorm(Map<Long, Double> features) {
@@ -189,69 +204,16 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
         List<Object[]> batchArgs = new ArrayList<>();
         List<Long> allItems = new ArrayList<>(itemUserMap.keySet());
 
-        // 0. 统一查询真正的购买记录（behavior_type = 4）
-        Map<Long, Set<Long>> purchasedMap = new HashMap<>();
-        List<Map<String, Object>> buyRows = jdbcTemplate.queryForList("SELECT user_id, product_id FROM user_behavior WHERE behavior_type = 4 AND deleted = 0");
-        for (Map<String, Object> row : buyRows) {
-            Long userId = ((Number) row.get("user_id")).longValue();
-            Long itemId = ((Number) row.get("product_id")).longValue();
-            purchasedMap.computeIfAbsent(userId, k -> new HashSet<>()).add(itemId);
-        }
+        Map<Long, Set<Long>> purchasedMap = loadPurchasedMap();
 
-        for (Long userId : userItemMap.keySet()) {
-            Map<Long, Double> history = userItemMap.get(userId);
+        for (Map.Entry<Long, Map<Long, Double>> userEntry : userItemMap.entrySet()) {
+            Long userId = userEntry.getKey();
+            Map<Long, Double> history = userEntry.getValue();
             Set<Long> purchasedSet = purchasedMap.getOrDefault(userId, Collections.emptySet());
 
-            // 收集该用户所有候选商品的预测得分
-            List<Map.Entry<Long, Double>> candidates = new ArrayList<>();
-            for (Long itemId : allItems) {
-                if (purchasedSet.contains(itemId)) {
-                    continue; // 只有真正已购买过的商品才排除，不再预测与推荐
-                }
+            List<Map.Entry<Long, Double>> candidates = scoreCandidates(
+                    userId, history, purchasedSet, allItems, itemSim, userSim, userItemMap);
 
-                // ICF 预测得分
-                double icfScore = 0.0, icfSimSum = 0.0;
-                Map<Long, Double> itemNeighbors = itemSim.get(itemId);
-                if (itemNeighbors != null) {
-                    for (Map.Entry<Long, Double> entry : itemNeighbors.entrySet()) {
-                        Double h = history.get(entry.getKey());
-                        if (h != null) {
-                            icfScore += entry.getValue() * h;
-                            icfSimSum += entry.getValue();
-                        }
-                    }
-                }
-                if (icfSimSum > 0) icfScore /= icfSimSum;
-
-                // UCF 预测得分
-                double ucfScore = 0.0, ucfSimSum = 0.0;
-                Map<Long, Double> userNeighbors = userSim.get(userId);
-                if (userNeighbors != null) {
-                    for (Map.Entry<Long, Double> entry : userNeighbors.entrySet()) {
-                        Map<Long, Double> neighborHistory = userItemMap.get(entry.getKey());
-                        Double h = (neighborHistory == null) ? null : neighborHistory.get(itemId);
-                        if (h != null) {
-                            ucfScore += entry.getValue() * h;
-                            ucfSimSum += entry.getValue();
-                        }
-                    }
-                }
-                if (ucfSimSum > 0) ucfScore /= ucfSimSum;
-
-                double finalScore = 0.6 * icfScore + 0.4 * ucfScore;
-
-                // 曾有交互（浏览/收藏/加购）但未购买的商品，进行兴趣加权奖励（乘法系数 1.2）
-                Double existingScore = history.get(itemId);
-                if (existingScore != null && existingScore > 0) {
-                    finalScore *= 1.2;
-                }
-
-                if (finalScore > 0.1) {
-                    candidates.add(new AbstractMap.SimpleEntry<>(itemId, finalScore));
-                }
-            }
-
-            // 每个用户仅保留 Top-N（按得分降序）
             candidates.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
             int limit = Math.min(TOP_N_PER_USER, candidates.size());
             for (int k = 0; k < limit; k++) {
@@ -263,5 +225,76 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
         if (!batchArgs.isEmpty()) {
             jdbcTemplate.batchUpdate("INSERT INTO recommend_result (id, user_id, product_id, score, source, create_time) VALUES (?, ?, ?, ?, ?, NOW())", batchArgs);
         }
+    }
+
+    private Map<Long, Set<Long>> loadPurchasedMap() {
+        Map<Long, Set<Long>> purchasedMap = new HashMap<>();
+        List<Map<String, Object>> buyRows = jdbcTemplate.queryForList(
+                "SELECT user_id, product_id FROM user_behavior WHERE behavior_type = 4 AND deleted = 0");
+        for (Map<String, Object> row : buyRows) {
+            Long userId = ((Number) row.get(USER_ID)).longValue();
+            Long itemId = ((Number) row.get(PRODUCT_ID)).longValue();
+            purchasedMap.computeIfAbsent(userId, k -> new HashSet<>()).add(itemId);
+        }
+        return purchasedMap;
+    }
+
+    private List<Map.Entry<Long, Double>> scoreCandidates(Long userId, Map<Long, Double> history,
+                                                          Set<Long> purchasedSet, List<Long> allItems,
+                                                          Map<Long, Map<Long, Double>> itemSim,
+                                                          Map<Long, Map<Long, Double>> userSim,
+                                                          Map<Long, Map<Long, Double>> userItemMap) {
+        List<Map.Entry<Long, Double>> candidates = new ArrayList<>();
+        for (Long itemId : allItems) {
+            if (purchasedSet.contains(itemId)) {
+                continue;
+            }
+            double icfScore = predictIcfScore(itemId, history, itemSim);
+            double ucfScore = predictUcfScore(userId, itemId, userSim, userItemMap);
+            double finalScore = 0.6 * icfScore + 0.4 * ucfScore;
+
+            Double existingScore = history.get(itemId);
+            if (existingScore != null && existingScore > 0) {
+                finalScore *= 1.2;
+            }
+            if (finalScore > 0.1) {
+                candidates.add(new AbstractMap.SimpleEntry<>(itemId, finalScore));
+            }
+        }
+        return candidates;
+    }
+
+    private double predictIcfScore(Long itemId, Map<Long, Double> history, Map<Long, Map<Long, Double>> itemSim) {
+        double icfScore = 0.0;
+        double icfSimSum = 0.0;
+        Map<Long, Double> itemNeighbors = itemSim.get(itemId);
+        if (itemNeighbors != null) {
+            for (Map.Entry<Long, Double> entry : itemNeighbors.entrySet()) {
+                Double h = history.get(entry.getKey());
+                if (h != null) {
+                    icfScore += entry.getValue() * h;
+                    icfSimSum += entry.getValue();
+                }
+            }
+        }
+        return icfSimSum > 0 ? icfScore / icfSimSum : 0.0;
+    }
+
+    private double predictUcfScore(Long userId, Long itemId, Map<Long, Map<Long, Double>> userSim,
+                                   Map<Long, Map<Long, Double>> userItemMap) {
+        double ucfScore = 0.0;
+        double ucfSimSum = 0.0;
+        Map<Long, Double> userNeighbors = userSim.get(userId);
+        if (userNeighbors != null) {
+            for (Map.Entry<Long, Double> entry : userNeighbors.entrySet()) {
+                Map<Long, Double> neighborHistory = userItemMap.get(entry.getKey());
+                Double h = (neighborHistory == null) ? null : neighborHistory.get(itemId);
+                if (h != null) {
+                    ucfScore += entry.getValue() * h;
+                    ucfSimSum += entry.getValue();
+                }
+            }
+        }
+        return ucfSimSum > 0 ? ucfScore / ucfSimSum : 0.0;
     }
 }
