@@ -27,6 +27,28 @@ public class QiniuService {
     private QiniuConfig qiniuConfig;
 
     /**
+     * 为前端直传生成凭证、唯一文件名和预览 URL。
+     */
+    public java.util.Map<String, String> createUploadTicket(String dir, String filename) {
+        String ext = (filename != null && filename.contains("."))
+                ? filename.substring(filename.lastIndexOf('.')) : "";
+        String key = dir + "/" + UUID.randomUUID().toString().replace("-", "") + ext;
+
+        // 生成针对特定 key 的直传 Token，前端直传时可避免覆盖他人文件
+        String token = auth.uploadToken(qiniuConfig.getBucket(), key);
+
+        String baseUrl = qiniuConfig.getDomain() + "/" + key;
+        long expireInSeconds = 3600L * 24 * 365; // 预签名私有URL一年有效
+        String url = auth.privateDownloadUrl(baseUrl, expireInSeconds);
+
+        java.util.Map<String, String> map = new java.util.HashMap<>();
+        map.put("token", token);
+        map.put("key", key);
+        map.put("url", url);
+        return map;
+    }
+
+    /**
      * 上传文件到七牛。
      *
      * @param file 前端上传的文件（multipart）

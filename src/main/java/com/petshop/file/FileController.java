@@ -6,6 +6,7 @@ import com.petshop.security.RequireRole;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -41,6 +42,13 @@ public class FileController {
     @PostMapping("/video")
     public Result<Map<String, String>> uploadVideo(@RequestParam("file") MultipartFile file) {
         return Result.success(buildUrlResponse(qiniuService.upload(file, "videos")));
+    }
+
+    @ApiOperation("获取七牛云直传凭证（Token）")
+    @RequireRole({"ADMIN", "MERCHANT"})
+    @GetMapping("/upload-ticket")
+    public Result<Map<String, String>> getUploadTicket(@RequestParam("dir") String dir, @RequestParam("filename") String filename) {
+        return Result.success(qiniuService.createUploadTicket(dir, filename));
     }
 
     @ApiOperation("上传用户头像，返回可访问 URL")
