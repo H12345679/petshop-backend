@@ -3,9 +3,9 @@ server:
 
 spring:
   profiles:
-    # 想要使用局域网 IP (10.22.141.136) 数据库，请加上 lan，即 active: dev,lan,local
+    # 想要使用局域网 IP (10.22.230.230) 数据库，请加上 lan，即 active: dev,lan,local
     # local 用于放本机私有配置（如七牛真实密钥），见 application-local.yml（已 gitignore，没有也能启动）
-    active: dev,local
+    active: dev,lan,local
   application:
     name: petshop-backend
   # 热启动/热部署：改完代码 Ctrl+F9（IDEA 重新编译）即自动重启
