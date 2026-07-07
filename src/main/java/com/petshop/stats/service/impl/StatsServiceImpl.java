@@ -26,7 +26,6 @@ public class StatsServiceImpl implements StatsService {
 
     private static final String COUNT = "count";
     private static final String TOTAL_SALES = "totalSales";
-    private final java.security.SecureRandom random = new java.security.SecureRandom();
 
     @Autowired
     private OrderMapper orderMapper;
@@ -45,6 +44,9 @@ public class StatsServiceImpl implements StatsService {
 
     @Autowired
     private com.petshop.security.OwnershipChecker ownershipChecker;
+
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     @Override
     public Map<String, Object> getKpi() {
@@ -77,11 +79,6 @@ public class StatsServiceImpl implements StatsService {
                 .map(o -> getEffectiveAmount(o))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         int todayOrders = todayOrdersList.size();
-
-        if (shopIds == null && todayOrders == 0) {
-            todayRevenue = new BigDecimal("2410.00");
-            todayOrders = 4;
-        }
 
         Long totalUsers = computeTotalUsers(shopIds);
 
@@ -130,16 +127,18 @@ public class StatsServiceImpl implements StatsService {
         }
         List<Order> allOrders = orderMapper.selectList(query);
 
-        boolean hasRealData = (shopIds != null) || !allOrders.isEmpty();
-
-        // 【Demo 兜底机制】：如果是刚部署的系统（全平台没有真实订单），为了让大盘折线图好看点，塞一组假数据作为演示。一旦有了真实订单，就会自动切换。
-        int[] demoOrders = {2, 3, 5, 2, 6, 8, 4, 5, 7, 3, 6, 9, 5, 4, 6, 8, 5, 7, 4, 6, 5, 8, 7, 9, 6, 5, 8, 7, 6, 4};
-        double[] demoRevs = {1200, 1800, 3100, 1500, 3800, 5200, 2410, 3200, 4500, 1900, 3700, 5800, 3100, 2600, 3900, 5100, 3200, 4400, 2500, 3800, 3100, 5000, 4300, 5900, 3800, 3100, 4900, 4200, 3600, 2410};
-
         for (int i = days - 1; i >= 0; i--) {
             LocalDate d = now.minusDays(i);
             dates.add(d.format(dtf));
-            aggregateDayStats(allOrders, hasRealData, d, (days - 1 - i), demoOrders, demoRevs, orderCounts, revenues);
+            long count = allOrders.stream()
+                    .filter(o -> o.getCreateTime() != null && o.getCreateTime().toLocalDate().equals(d))
+                    .count();
+            BigDecimal rev = allOrders.stream()
+                    .filter(o -> o.getCreateTime() != null && o.getCreateTime().toLocalDate().equals(d))
+                    .map(this::getEffectiveAmount)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            orderCounts.add((int) count);
+            revenues.add(rev);
         }
 
         Map<String, Object> res = new HashMap<>();
@@ -167,15 +166,6 @@ public class StatsServiceImpl implements StatsService {
         Map<Integer, Long> countMap = allOrders.stream()
                 .filter(o -> o.getStatus() != null)
                 .collect(Collectors.groupingBy(Order::getStatus, Collectors.counting()));
-
-        if (shopIds == null && allOrders.isEmpty()) {
-            countMap.put(0, 5L);
-            countMap.put(1, 15L);
-            countMap.put(2, 8L);
-            countMap.put(3, 10L);
-            countMap.put(4, 120L);
-            countMap.put(-3, 6L);
-        }
 
         Map<Integer, String> labelMap = new LinkedHashMap<>();
         labelMap.put(0, "待支付");
@@ -249,38 +239,46 @@ public class StatsServiceImpl implements StatsService {
         query.orderByDesc(Product::getSales);
         List<Product> products = productMapper.selectList(query);
 
-        if (shopIds == null && products.isEmpty()) {
-            products = productMapper.selectList(null);
-        }
-
-        if (shopIds == null && hasNoRealSalesData(products)) {
-            String[] demoNames = {"蓝猫", "皇家猫粮", "逗猫棒", "金毛犬", "猫砂10kg", "美短", "自动喂食器", "布偶猫", "实木猫爬架", "智能饮水机"};
-            int[] demoSales = {120, 96, 85, 70, 65, 58, 48, 40, 35, 25};
-            return buildDemoProductSales(limit, demoNames, demoSales);
-        }
         return buildRealProductSales(products, limit);
-    }
-
-    private boolean hasNoRealSalesData(List<Product> products) {
-        return products.isEmpty()
-                || products.stream().allMatch(p -> p.getSales() == null || p.getSales() == 0);
     }
 
     @Override
     public List<Map<String, Object>> getDailyStats(Integer days) {
         if (days == null || days <= 0) days = 7;
-        List<Map<String, Object>> list = new ArrayList<>();
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MM-dd");
         LocalDate now = LocalDate.now(ZoneId.systemDefault());
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MM-dd");
+        java.sql.Timestamp since = java.sql.Timestamp.valueOf(now.minusDays((long) days - 1).atStartOfDay());
 
-        // 兜底 demo 数据
-        double[] demos = {1200, 1800, 3100, 1500, 3800, 5200, 2410};
+        Map<String, BigDecimal> revenueMap = new HashMap<>();
+        List<Map<String, Object>> revRows = jdbcTemplate.queryForList(
+                "SELECT DATE(create_time) AS d, SUM(COALESCE(pay_amount, total_amount, 0)) AS rev FROM orders WHERE create_time >= ? AND status >= 0 GROUP BY DATE(create_time)", since);
+        for (Map<String, Object> r : revRows) {
+            revenueMap.put(String.valueOf(r.get("d")), new BigDecimal(String.valueOf(r.get("rev"))));
+        }
+
+        Map<String, Long> userMap = new HashMap<>();
+        List<Map<String, Object>> userRows = jdbcTemplate.queryForList(
+                "SELECT DATE(create_time) AS d, COUNT(*) AS cnt FROM user WHERE create_time >= ? GROUP BY DATE(create_time)", since);
+        for (Map<String, Object> r : userRows) {
+            userMap.put(String.valueOf(r.get("d")), ((Number) r.get("cnt")).longValue());
+        }
+
+        Map<String, Long> opsMap = new HashMap<>();
+        List<Map<String, Object>> opsRows = jdbcTemplate.queryForList(
+                "SELECT DATE(create_time) AS d, COUNT(*) AS cnt FROM sys_log WHERE create_time >= ? GROUP BY DATE(create_time)", since);
+        for (Map<String, Object> r : opsRows) {
+            opsMap.put(String.valueOf(r.get("d")), ((Number) r.get("cnt")).longValue());
+        }
+
+        List<Map<String, Object>> list = new ArrayList<>();
         for (int i = days - 1; i >= 0; i--) {
+            LocalDate d = now.minusDays(i);
+            String key = d.toString();
             Map<String, Object> item = new HashMap<>();
-            item.put("date", now.minusDays(i).format(dtf));
-            item.put("revenue", BigDecimal.valueOf(demos[i % demos.length] + (i * 100)));
-            item.put("newUsers", (long) (3 + i % 5));
-            item.put("operationCount", (long) (10 + i % 15));
+            item.put("date", d.format(dtf));
+            item.put("revenue", revenueMap.getOrDefault(key, BigDecimal.ZERO));
+            item.put("newUsers", userMap.getOrDefault(key, 0L));
+            item.put("operationCount", opsMap.getOrDefault(key, 0L));
             list.add(item);
         }
         return list;
@@ -289,25 +287,29 @@ public class StatsServiceImpl implements StatsService {
     @Override
     public Map<String, Object> getLogOps(Integer days) {
         if (days == null || days <= 0) days = 7;
+        java.sql.Timestamp since = java.sql.Timestamp.valueOf(
+                LocalDate.now(ZoneId.systemDefault()).minusDays(days).atStartOfDay());
         Map<String, Object> result = new HashMap<>();
 
-        // Top 操作列表
-        List<Map<String, Object>> topOps = new ArrayList<>();
-        String[][] demoOps = {{"商品查询", "156"}, {"订单管理", "98"}, {"用户管理", "72"}, {"店铺编辑", "45"}, {"视频上传", "38"}, {"评价审核", "31"}, {"优惠券配置", "22"}, {"消息推送", "18"}, {"角色变更", "12"}, {"系统配置", "8"}};
-        for (String[] op : demoOps) {
-            Map<String, Object> item = new HashMap<>();
-            item.put("operation", op[0]);
-            item.put(COUNT, Integer.parseInt(op[1]));
-            topOps.add(item);
-        }
+        // Top 10 高频操作（从 sys_log 真实统计）
+        List<Map<String, Object>> topOps = jdbcTemplate.queryForList(
+                "SELECT operation, COUNT(*) AS count FROM sys_log WHERE create_time >= ? AND operation IS NOT NULL AND operation != '' GROUP BY operation ORDER BY count DESC LIMIT 10",
+                since);
         result.put("topOperations", topOps);
 
-        // 24 小时分布
+        // 24 小时活跃度分布（从 sys_log 真实统计）
+        Map<Integer, Long> hourCountMap = new HashMap<>();
+        List<Map<String, Object>> hourRows = jdbcTemplate.queryForList(
+                "SELECT HOUR(create_time) AS h, COUNT(*) AS cnt FROM sys_log WHERE create_time >= ? GROUP BY HOUR(create_time)",
+                since);
+        for (Map<String, Object> r : hourRows) {
+            hourCountMap.put(((Number) r.get("h")).intValue(), ((Number) r.get("cnt")).longValue());
+        }
         List<Map<String, Object>> hourly = new ArrayList<>();
         for (int h = 0; h < 24; h++) {
             Map<String, Object> item = new HashMap<>();
             item.put("hour", h);
-            item.put(COUNT, random.nextInt(15) + 2);
+            item.put(COUNT, hourCountMap.getOrDefault(h, 0L));
             hourly.add(item);
         }
         result.put("hourlyDistribution", hourly);
@@ -325,7 +327,7 @@ public class StatsServiceImpl implements StatsService {
         // 查所有店铺，按销售额排序
         List<com.petshop.shop.entity.Shop> allShops = shopMapper.selectList(null);
         if (allShops.isEmpty()) {
-            return demoShopRanking(limit);
+            return new ArrayList<>();
         }
 
         // 按店铺聚合订单销售额
@@ -338,9 +340,6 @@ public class StatsServiceImpl implements StatsService {
         list.sort((a, b) -> ((BigDecimal) b.get(TOTAL_SALES)).compareTo((BigDecimal) a.get(TOTAL_SALES)));
         if (list.size() > limit) list = list.subList(0, limit);
 
-        if (list.isEmpty() || (String.valueOf(list.get(0).get(TOTAL_SALES)).equals("0"))) {
-            return demoShopRanking(limit);
-        }
         return list;
     }
 
@@ -354,72 +353,22 @@ public class StatsServiceImpl implements StatsService {
         return BigDecimal.ZERO;
     }
 
-    private List<Map<String, Object>> demoShopRanking(int limit) {
-        String[][] demos = {{"爱宠之家(南山店)", "45200"}, {"萌宠星球(福田店)", "36800"}, {"汪星人基地(宝安店)", "28500"},
-                {"喵星球旗舰店", "19200"}, {"宠物乐园(龙岗店)", "14800"}, {"狗狗俱乐部", "12500"},
-                {"水族世界", "9800"}, {"快乐宠物屋", "7600"}, {"萌宠生活馆", "5400"}, {"宠物之家(罗湖店)", "3200"}};
-        List<Map<String, Object>> list = new ArrayList<>();
-        for (int i = 0; i < Math.min(limit, demos.length); i++) {
-            Map<String, Object> item = new HashMap<>();
-            item.put("shopName", demos[i][0]);
-            item.put(TOTAL_SALES, new BigDecimal(demos[i][1]));
-            item.put("orderCount", 50 - i * 4);
-            list.add(item);
-        }
-        return list;
-    }
-
     private Long computeTotalUsers(List<Long> shopIds) {
         if (shopIds == null) {
             Long totalUsers = userMapper.selectCount(new LambdaQueryWrapper<User>().eq(User::getStatus, 1));
-            if (totalUsers == null || totalUsers == 0) {
-                totalUsers = userMapper.selectCount(null);
-            }
-            if (totalUsers == null || totalUsers == 0) {
-                totalUsers = 810L;
-            }
-            return totalUsers;
+            return totalUsers != null ? totalUsers : 0L;
         }
         List<Order> merchantOrders = orderMapper.selectList(new LambdaQueryWrapper<Order>().in(Order::getShopId, shopIds));
         return merchantOrders.stream().map(Order::getUserId).filter(Objects::nonNull).distinct().count();
     }
 
     private Long computeActiveProducts(List<Long> shopIds) {
-        if (shopIds == null) {
-            Long activeProducts = productMapper.selectCount(new LambdaQueryWrapper<Product>().eq(Product::getStatus, 1));
-            if (activeProducts == null || activeProducts == 0) {
-                activeProducts = productMapper.selectCount(null);
-            }
-            if (activeProducts == null || activeProducts == 0) {
-                activeProducts = 256L;
-            }
-            return activeProducts;
+        LambdaQueryWrapper<Product> query = new LambdaQueryWrapper<Product>().eq(Product::getStatus, 1);
+        if (shopIds != null) {
+            query.in(Product::getShopId, shopIds);
         }
-        Long activeProducts = productMapper.selectCount(new LambdaQueryWrapper<Product>().in(Product::getShopId, shopIds).eq(Product::getStatus, 1));
-        if (activeProducts == null) {
-            activeProducts = 0L;
-        }
-        return activeProducts;
-    }
-
-    private void aggregateDayStats(List<Order> allOrders, boolean hasRealData, LocalDate d,
-                                   int dayIndex, int[] demoOrders, double[] demoRevs,
-                                   List<Integer> orderCounts, List<BigDecimal> revenues) {
-        if (hasRealData) {
-            long count = allOrders.stream()
-                    .filter(o -> o.getCreateTime() != null && o.getCreateTime().toLocalDate().equals(d))
-                    .count();
-            BigDecimal rev = allOrders.stream()
-                    .filter(o -> o.getCreateTime() != null && o.getCreateTime().toLocalDate().equals(d))
-                    .map(o -> getEffectiveAmount(o))
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-            orderCounts.add((int) count);
-            revenues.add(rev);
-        } else {
-            int idx = dayIndex % demoOrders.length;
-            orderCounts.add(demoOrders[idx]);
-            revenues.add(BigDecimal.valueOf(demoRevs[idx]));
-        }
+        Long activeProducts = productMapper.selectCount(query);
+        return activeProducts != null ? activeProducts : 0L;
     }
 
     private List<User> fetchUsersForStats(List<Long> shopIds) {
@@ -436,13 +385,6 @@ public class StatsServiceImpl implements StatsService {
 
     private void populateLevelCounts(List<User> users, Map<Long, String> levelNameMap,
                                      Map<String, Long> countByLevelName, List<Long> shopIds) {
-        if (shopIds == null && users.isEmpty()) {
-            countByLevelName.put("非会员", 200L);
-            countByLevelName.put("普通", 500L);
-            countByLevelName.put("银卡", 80L);
-            countByLevelName.put("金卡", 30L);
-            return;
-        }
         for (User u : users) {
             Long lid = u.getMemberLevelId();
             if (lid == null || lid <= 0 || !levelNameMap.containsKey(lid)) {
@@ -452,17 +394,6 @@ public class StatsServiceImpl implements StatsService {
                 countByLevelName.put(name, countByLevelName.getOrDefault(name, 0L) + 1);
             }
         }
-    }
-
-    private List<Map<String, Object>> buildDemoProductSales(int limit, String[] demoNames, int[] demoSales) {
-        List<Map<String, Object>> list = new ArrayList<>();
-        for (int i = 0; i < Math.min(limit, demoNames.length); i++) {
-            Map<String, Object> item = new HashMap<>();
-            item.put("product_name", demoNames[i]);
-            item.put("total_sales", demoSales[i]);
-            list.add(item);
-        }
-        return list;
     }
 
     private List<Map<String, Object>> buildRealProductSales(List<Product> products, int limit) {
