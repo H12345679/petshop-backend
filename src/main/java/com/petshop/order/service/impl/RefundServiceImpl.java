@@ -68,6 +68,10 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
 
     private static final String REFUND_NO_PREFIX = "RFD";
 
+    /**
+     * 申请退款
+     * 支持部分退款和整单退款。若所有明细都在退款中或已退款，则冻结整单。
+     */
     @Override
     @Transactional
     public Map<String, Object> applyRefund(Long orderId, Long orderItemId, BigDecimal amount, String reason,
@@ -148,6 +152,15 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         return result;
     }
 
+    /**
+     * 定位退款明细。
+     * 如果指定了明细ID则校验并返回，如果没有指定但订单只有一个明细也自动返回。
+     * 否则抛出异常要求选择明细。
+     *
+     * @param allItems    订单下所有明细
+     * @param orderItemId 指定退款的明细ID
+     * @return 匹配的明细对象
+     */
     private OrderItem resolveTargetItem(List<OrderItem> allItems, Long orderItemId) {
         if (allItems.isEmpty()) throw new BusinessException("订单明细为空");
         if (orderItemId != null) {
@@ -161,6 +174,12 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         throw new BusinessException("该订单含多个商品，请选择要退款的商品");
     }
 
+    /**
+     * 判断订单明细是否在退款流程中或者已经退款完毕
+     *
+     * @param item 订单明细
+     * @return true如果在退款流程中或已完成
+     */
     private boolean isItemInRefundOrDone(OrderItem item) {
         Integer rs = item.getRefundStatus();
         if (rs != null && rs > 0) return true;
@@ -168,6 +187,10 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         return cs != null && cs > 0;
     }
 
+    /**
+     * 商家审核退款申请
+     * @param status 1-同意退款，2-驳回退款
+     */
     @Override
     @Transactional
     public void auditRefund(Long refundId, Integer status, String auditRemark) {
@@ -196,6 +219,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         }
     }
 
+    /**
+     * 用户提交退货物流信息
+     */
     @Override
     @Transactional
     public void submitReturnShipping(Long refundId, String courierCompany, String trackingNumber) {
@@ -224,6 +250,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
                 "用户已寄回退货，快递：" + (courierCompany != null ? courierCompany : "") + " " + trackingNumber.trim());
     }
 
+    /**
+     * 商家确认收货，完成打款
+     */
     @Override
     @Transactional
     public void confirmReturnReceived(Long refundId, String remark) {
@@ -248,6 +277,12 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         resolveOrderAfterItemRefund(order, operatorId, role, buildConfirmLogMsg(isCourierRefund, refund));
     }
 
+    /**
+     * 确认收货时，校验退款单的有效性和状态
+     *
+     * @param refundId 退款单ID
+     * @return 有效的退款单对象
+     */
     private Refund validateRefundForConfirm(Long refundId) {
         Refund refund = this.getById(refundId);
         if (refund == null) throw new BusinessException(ResultCode.NOT_FOUND);
@@ -257,6 +292,12 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         return refund;
     }
 
+    /**
+     * 确认收货时，校验对应订单是否存在以及是否属于当前操作商家
+     *
+     * @param refund 退款单对象
+     * @return 关联的订单对象
+     */
     private Order validateOrderForConfirm(Refund refund) {
         Order order = orderMapper.selectById(refund.getOrderId());
         if (order == null) throw new BusinessException("关联订单不存在");
@@ -264,16 +305,35 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         return order;
     }
 
+    /**
+     * 判断是否属于快递退回退款场景（用户未收到货发起的仅退款）
+     *
+     * @param refund 退款单对象
+     * @return true如果是快递退款
+     */
     private boolean isCourierRefund(Refund refund) {
         return Integer.valueOf(1).equals(refund.getRefundType())
                 && Integer.valueOf(0).equals(refund.getReceived());
     }
 
+    /**
+     * 执行余额退款操作（带金额上限控制，最大不超过订单实付）
+     *
+     * @param order  订单对象
+     * @param amount 申请退款金额
+     */
     private void refundBalanceCapped(Order order, BigDecimal amount) {
         BigDecimal capped = amount.compareTo(order.getPayAmount()) > 0 ? order.getPayAmount() : amount;
         refundToBalance(order, capped);
     }
 
+    /**
+     * 构建确认收货的日志描述信息
+     *
+     * @param isCourierRefund 是否快递退回退款
+     * @param refund          退款单对象
+     * @return 日志描述
+     */
     private String buildConfirmLogMsg(boolean isCourierRefund, Refund refund) {
         if (isCourierRefund) {
             return "商家确认已收到快递公司退回货物，库存已恢复";
@@ -281,6 +341,13 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         return "商家确认收到退货（单号 " + refund.getReturnTrackingNumber() + "），退款完成";
     }
 
+    /**
+     * 追加审核备注信息，使用分号分隔
+     *
+     * @param refund 退款单
+     * @param prefix 备注前缀
+     * @param remark 备注内容
+     */
     private void appendAuditRemark(Refund refund, String prefix, String remark) {
         if (remark == null || remark.trim().isEmpty()) return;
         String old = refund.getAuditRemark();
@@ -288,6 +355,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         refund.setAuditRemark(base + prefix + remark.trim());
     }
 
+    /**
+     * 后台管理员或系统直接退款（跳过审核）
+     */
     @Override
     @Transactional
     public void directRefund(Long orderId, String reason) {
@@ -338,6 +408,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         saveStatusLog(orderId, currentStatus, -4, operatorId, role, reason);
     }
 
+    /**
+     * 根据订单ID或订单号进行直接退款
+     */
     @Override
     @Transactional
     public void directRefundByOrderIdOrNo(Long orderId, String orderNo, String reason) {
@@ -353,6 +426,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         this.directRefund(orderId, reason);
     }
 
+    /**
+     * 退款记录分页查询（管理端）
+     */
     @Override
     public PageResult<Map<String, Object>> managePage(int current, int size, Long shopId,
                                                       Integer status, String refundNo, String username) {
@@ -653,6 +729,16 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         userMapper.updateById(user);
     }
 
+    /**
+     * 保存订单状态流转日志
+     *
+     * @param orderId    订单ID
+     * @param from       变更前状态
+     * @param to         变更后状态
+     * @param operatorId 操作人ID
+     * @param role       操作人角色
+     * @param remark     备注
+     */
     private void saveStatusLog(Long orderId, Integer from, Integer to,
                                Long operatorId, String role, String remark) {
         OrderStatusLog log = new OrderStatusLog();
@@ -665,6 +751,12 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         orderStatusLogMapper.insert(log);
     }
 
+    /**
+     * 获取订单状态对应的文本描述
+     *
+     * @param code 状态码
+     * @return 状态描述
+     */
     private String statusDesc(Integer code) {
         OrderStatus os = OrderStatus.of(code);
         return os != null ? os.getDesc() : String.valueOf(code);
@@ -755,6 +847,11 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         rollbackStock(orderId);
     }
 
+    /**
+     * 回滚订单下单时扣减的指定商品库存
+     *
+     * @param oi 订单明细
+     */
     private void rollbackSingleItem(OrderItem oi) {
         if (oi.getSkuId() != null && oi.getSkuId() != 0) {
             productSkuMapper.update(null, new LambdaUpdateWrapper<ProductSku>()

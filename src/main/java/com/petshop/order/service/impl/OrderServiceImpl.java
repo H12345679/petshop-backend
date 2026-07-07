@@ -107,6 +107,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     // ==================== 结算预览 ====================
 
+    /**
+     * 结算预览
+     * 计算商品总价、会员折扣、优惠券抵扣以及最终应付金额。
+     */
     @Override
     public Map<String, Object> preSettle(List<Map<String, Object>> items, Long userCouponId, Long addressId) {
         Long userId = requireUserId();
@@ -150,6 +154,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     // ==================== 创建订单 ====================
 
+    /**
+     * 创建订单
+     * 包含幂等性校验、跨店拆单、锁定优惠券、扣减库存。
+     */
     @Override
     @Transactional
     @SuppressWarnings("unchecked")
@@ -202,6 +210,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     // ==================== 我的订单 ====================
 
+    /**
+     * 查询我的订单（分页）
+     */
     @Override
     public PageResult<Map<String, Object>> myOrders(int current, int size, Integer status) {
         Long userId = requireUserId();
@@ -215,6 +226,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return buildOrderPageResult(page);
     }
 
+    /**
+     * 根据订单ID获取订单详情
+     */
     @Override
     public Map<String, Object> getOrderById(Long orderId, Long userId) {
         Order order = this.getById(orderId);
@@ -225,6 +239,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     // ==================== 后台订单管理 ====================
 
+    /**
+     * 后台订单管理（分页查询）
+     */
     @Override
     public PageResult<Map<String, Object>> manageOrders(int current, int size, Long shopId,
                                                          String orderNo, Integer status) {
@@ -257,6 +274,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     // ==================== 订单流转：支付 / 取消 / 发货 / 收货 ====================
 
+    /**
+     * 订单支付
+     * 扣减用户余额，更新订单状态为已支付。
+     */
     @Override
     @Transactional
     public void pay(Long orderId, Integer payType) {
@@ -294,6 +315,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         settleShopCustomer(order, userId);
     }
 
+    /**
+     * 记录用户购买行为，发送消息至推荐系统
+     */
     private void recordPurchaseBehavior(Long userId, Long orderId) {
         LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
         oiWrapper.eq(OrderItem::getOrderId, orderId);
@@ -314,12 +338,18 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 
+    /**
+     * 更新店铺客户购买记录
+     */
     private void settleShopCustomer(Order order, Long userId) {
         if (order.getShopId() != null && order.getShopId() > 0) {
             shopCustomerMapper.insertOrUpdatePurchaseTime(order.getShopId(), userId);
         }
     }
 
+    /**
+     * 批量支付多个订单
+     */
     @Override
     @Transactional
     public void batchPay(List<Long> orderIds, Integer payType) {
@@ -358,6 +388,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 
+    /**
+     * 取消订单（支持整单取消或部分商品取消）
+     */
     @Override
     @Transactional
     public void cancel(Long orderId, Long orderItemId, String reason) {
@@ -378,6 +411,14 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 
+    /**
+     * 整单取消逻辑
+     *
+     * @param order  订单对象
+     * @param userId 用户ID
+     * @param from   变更前状态
+     * @param reason 取消原因
+     */
     private void fullCancel(Order order, Long userId, int from, String reason) {
         OrderStatus.checkTransition(from, -1);
         int rows = this.baseMapper.update(null, new LambdaUpdateWrapper<Order>()
@@ -403,6 +444,15 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 
+    /**
+     * 部分商品取消逻辑
+     *
+     * @param order       订单对象
+     * @param orderItemId 要取消的订单明细ID
+     * @param userId      用户ID
+     * @param from        变更前状态
+     * @param reason      取消原因
+     */
     private void partialCancel(Order order, Long orderItemId, Long userId, int from, String reason) {
         List<OrderItem> allItems = orderItemMapper.selectList(
                 new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOrderId, order.getId()));
@@ -460,6 +510,11 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 
+    /**
+     * 回滚单个商品的库存
+     *
+     * @param oi 订单明细对象
+     */
     private void rollbackSingleItemStock(OrderItem oi) {
         if (oi.getSkuId() != null && oi.getSkuId() != 0) {
             productSkuMapper.update(null, new LambdaUpdateWrapper<ProductSku>()
@@ -475,6 +530,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 
+    /**
+     * 商家发货
+     */
     @Override
     @Transactional
     public void ship(Long orderId, String courierCompany, String trackingNumber) {
@@ -494,6 +552,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 UserContext.getRole(), "商家发货");
     }
 
+    /**
+     * 用户确认收货
+     * 完成收货并赠送积分。
+     */
     @Override
     @Transactional
     public void receive(Long orderId) {
@@ -522,6 +584,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 
+    /**
+     * 删除订单（软删除）
+     */
     @Override
     @Transactional
     public void deleteOrder(Long orderId) {
@@ -546,6 +611,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         this.removeById(orderId);
     }
 
+    /**
+     * 批量取消超时未支付订单
+     */
     @Override
     @Transactional
     public int cancelTimeoutOrders(int timeoutMinutes) {
@@ -561,6 +629,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return cancelled;
     }
 
+    /**
+     * 取消单笔未支付订单
+     */
     @Override
     @Transactional
     public boolean cancelOneIfUnpaid(Long orderId) {
@@ -723,6 +794,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 
+    /**
+     * 构建退款信息的Map结构供前端使用
+     *
+     * @param refund 退款对象
+     * @return 包含退款信息的Map
+     */
     private Map<String, Object> buildRefundMap(Refund refund) {
         Map<String, Object> rf = new LinkedHashMap<>();
         rf.put("id", refund.getId());
@@ -768,6 +845,13 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return sku;
     }
 
+    /**
+     * 校验收货地址是否有效且归属当前用户
+     *
+     * @param addressId 地址ID
+     * @param userId    用户ID
+     * @return 校验通过的地址ID
+     */
     private Long validateAddressId(Long addressId, Long userId) {
         if (addressId == null || addressId <= 0) {
             throw new BusinessException("请选择收货地址");
@@ -779,18 +863,36 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return addressId;
     }
 
+    /**
+     * 从上下文中获取当前用户ID并校验
+     *
+     * @return 当前用户ID
+     */
     private Long requireUserId() {
         Long uid = UserContext.getUserId();
         if (uid == null) throw new BusinessException(ResultCode.UNAUTHORIZED);
         return uid;
     }
 
+    /**
+     * 安全地将对象转换为Long类型
+     *
+     * @param v 待转换对象
+     * @return 转换后的Long，如果为null则返回null
+     */
     private Long toLong(Object v) {
         if (v == null) return null;
         if (v instanceof Number) return ((Number) v).longValue();
         return Long.parseLong(v.toString());
     }
 
+    /**
+     * 安全地将对象转换为int类型
+     *
+     * @param v   待转换对象
+     * @param def 默认值
+     * @return 转换后的int值
+     */
     private int toInt(Object v, int def) {
         if (v == null) return def;
         if (v instanceof Number) return ((Number) v).intValue();
@@ -858,6 +960,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     // ---------- 复杂度拆分辅助方法 ----------
 
+    /**
+     * 计算结算明细的总金额
+     *
+     * @param items 包含商品ID和数量等信息的列表
+     * @return 总金额
+     */
     private BigDecimal calculateItemsTotal(List<Map<String, Object>> items) {
         BigDecimal total = BigDecimal.ZERO;
         for (Map<String, Object> item : items) {
@@ -880,6 +988,14 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return total;
     }
 
+    /**
+     * 校验用户使用的优惠券是否满足金额和有效期要求
+     *
+     * @param userCouponId 用户优惠券ID
+     * @param userId       当前用户ID
+     * @param totalAmount  订单总金额
+     * @return 校验通过的优惠券对象，如果不通过返回null
+     */
     private Coupon validateUserCoupon(Long userCouponId, Long userId, BigDecimal totalAmount) {
         if (userCouponId == null || userCouponId <= 0) return null;
         UserCoupon userCoupon = checkUserCouponOwnership(userCouponId, userId);
@@ -888,6 +1004,13 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return coupon;
     }
 
+    /**
+     * 检查用户是否拥有该优惠券且状态可用
+     *
+     * @param userCouponId 用户优惠券ID
+     * @param userId       用户ID
+     * @return 用户优惠券记录对象
+     */
     private UserCoupon checkUserCouponOwnership(Long userCouponId, Long userId) {
         UserCoupon userCoupon = userCouponMapper.selectById(userCouponId);
         if (userCoupon == null || !userCoupon.getUserId().equals(userId)) {
@@ -899,6 +1022,13 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return userCoupon;
     }
 
+    /**
+     * 检查优惠券本身的状态（是否在有效期内、是否达到金额门槛）
+     *
+     * @param coupon      优惠券对象
+     * @param totalAmount 订单总金额
+     * @return true如果优惠券可用
+     */
     private boolean isCouponUsable(Coupon coupon, BigDecimal totalAmount) {
         if (coupon == null || coupon.getStatus() != 1) return false;
         LocalDateTime now = LocalDateTime.now(ZoneId.systemDefault());
@@ -906,6 +1036,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return totalAmount.compareTo(coupon.getThreshold()) >= 0;
     }
 
+    /**
+     * 幂等性检查，防止重复提交订单
+     *
+     * @param requestId 请求ID
+     * @return 如果已经处理过该请求，返回缓存的结果Map，否则返回null
+     */
     @SuppressWarnings("unchecked")
     private Map<String, Object> checkIdempotency(String requestId) {
         if (requestId == null || requestId.isEmpty()) return null;
@@ -918,6 +1054,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 
+    /**
+     * 构建订单项行记录，处理所有待购买的商品信息
+     *
+     * @param items 待购买商品参数
+     * @return 订单项行列表
+     */
     private List<ItemLine> buildItemLines(List<Map<String, Object>> items) {
         List<ItemLine> itemLines = new ArrayList<>();
         for (Map<String, Object> item : items) {
@@ -926,6 +1068,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return itemLines;
     }
 
+    /**
+     * 解析单个购买项为订单项行对象，校验库存和价格
+     *
+     * @param item 单个购买项参数
+     * @return 解析后的订单项行对象
+     */
     private ItemLine resolveItemLine(Map<String, Object> item) {
         Long productId = toLong(item.get("productId"));
         Long skuId = toLong(item.get("skuId"));
@@ -954,6 +1102,15 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return new ItemLine(product, skuId, price, qty, product.getShopId(), specName);
     }
 
+    /**
+     * 锁定优惠券，计算抵扣金额并将其标记为已使用
+     *
+     * @param userCouponId      用户优惠券ID
+     * @param userId            用户ID
+     * @param totalOrderAmount  订单总金额（所有商品）
+     * @param amountAfterMember 会员折扣后的金额
+     * @return 锁定优惠券结果对象
+     */
     private CouponLockResult lockCoupon(Long userCouponId, Long userId,
                                          BigDecimal totalOrderAmount, BigDecimal amountAfterMember) {
         if (userCouponId == null || userCouponId <= 0) {
@@ -969,6 +1126,13 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return new CouponLockResult(discount, userCoupon);
     }
 
+    /**
+     * 锁定优惠券时，验证用户确实拥有该未使用且未过期的券
+     *
+     * @param userCouponId 用户优惠券ID
+     * @param userId       用户ID
+     * @return 用户优惠券对象
+     */
     private UserCoupon validateUserCoupon(Long userCouponId, Long userId) {
         UserCoupon uc = userCouponMapper.selectById(userCouponId);
         if (uc == null || !uc.getUserId().equals(userId)) throw new BusinessException("优惠券不存在");
@@ -976,6 +1140,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return uc;
     }
 
+    /**
+     * 锁定优惠券时，验证优惠券有效期配置
+     *
+     * @param couponId 优惠券配置ID
+     * @return 优惠券配置对象
+     */
     private Coupon validateCouponPeriod(Long couponId) {
         Coupon c = couponMapper.selectById(couponId);
         LocalDateTime now = LocalDateTime.now(ZoneId.systemDefault());
@@ -985,12 +1155,24 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return c;
     }
 
+    /**
+     * 计算优惠券减免的金额
+     *
+     * @param coupon            优惠券对象
+     * @param amountAfterMember 会员折扣后的金额
+     * @return 抵扣的金额
+     */
     private BigDecimal calcDiscount(Coupon coupon, BigDecimal amountAfterMember) {
         if (coupon.getType() == 1) return coupon.getAmount();
         if (coupon.getType() == 2) return amountAfterMember.multiply(BigDecimal.ONE.subtract(coupon.getAmount()));
         return BigDecimal.ZERO;
     }
 
+    /**
+     * 使用CAS原子更新用户优惠券状态为已使用
+     *
+     * @param userCouponId 用户优惠券ID
+     */
     private void casMarkCouponUsed(Long userCouponId) {
         int rows = userCouponMapper.update(null, new LambdaUpdateWrapper<UserCoupon>()
                 .eq(UserCoupon::getId, userCouponId)
@@ -1000,6 +1182,23 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (rows != 1) throw new BusinessException("优惠券已被使用");
     }
 
+    /**
+     * 创建店铺子订单（当购物车商品跨多个店铺时触发拆单）
+     * 按店铺的总计金额拆分订单，并按比例平摊运费/优惠折扣
+     *
+     * @param shopId           店铺ID
+     * @param lines            该店铺下的商品行
+     * @param totalOrderAmount 整个大单的商品总额
+     * @param totalPayAmount   整个大单的实付总额
+     * @param userCouponId     用户优惠券ID
+     * @param usedUserCoupon   使用过的优惠券记录对象
+     * @param address          收货地址
+     * @param remark           用户备注
+     * @param userId           用户ID
+     * @param today            当前日期前缀
+     * @param orderIds         存放生成的子订单ID
+     * @param orderNos         存放生成的子订单号
+     */
     private void createShopSubOrder(Long shopId, List<ItemLine> lines, BigDecimal totalOrderAmount,
                                      BigDecimal totalPayAmount, Long userCouponId, UserCoupon usedUserCoupon,
                                      Address address, String remark, Long userId, String today,
@@ -1056,6 +1255,16 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 
+    /**
+     * 处理订单项的创建并扣减实际库存，同时清理购物车中对应的记录
+     *
+     * @param line           当前处理的商品行
+     * @param order          所属的订单对象
+     * @param subPayAmount   当前子订单实付金额
+     * @param subTotalAmount 当前子订单总金额
+     * @param shopId         店铺ID
+     * @param userId         用户ID
+     */
     private void processOrderItem(ItemLine line, Order order, BigDecimal subPayAmount,
                                    BigDecimal subTotalAmount, Long shopId, Long userId) {
         BigDecimal lineSubtotal = line.price.multiply(BigDecimal.valueOf(line.qty));
@@ -1107,6 +1316,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 .eq(CartItem::getSkuId, targetSkuId));
     }
 
+    /**
+     * 将订单创建结果缓存进Redis实现请求幂等
+     *
+     * @param requestId 请求ID
+     * @param result    处理后的结果
+     */
     private void cacheIdempotentResult(String requestId, Map<String, Object> result) {
         if (requestId == null || requestId.isEmpty()) return;
         try {
@@ -1118,6 +1333,13 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 
+    /**
+     * 校验待批量支付的所有订单合法性
+     *
+     * @param orderIds 订单ID列表
+     * @param userId   当前用户ID
+     * @return 校验通过的订单列表
+     */
     private List<Order> validateBatchOrders(List<Long> orderIds, Long userId) {
         List<Order> orders = new ArrayList<>();
         for (Long orderId : orderIds) {
