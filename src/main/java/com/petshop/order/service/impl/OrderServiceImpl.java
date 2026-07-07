@@ -629,10 +629,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         vo.put("refund", rf);
     }
 
+    private static final java.security.SecureRandom SECURE_RANDOM = new java.security.SecureRandom();
+
     /** 生成订单号：ORD + yyyyMMdd + 时间戳后7位 + 3位随机数，避免 Redis 重启导致序号重复 */
     private String nextOrderNo(String datePrefix) {
         long timestampSuffix = System.currentTimeMillis() % 10000000L;
-        int randomDigits = java.util.concurrent.ThreadLocalRandom.current().nextInt(1000);
+        int randomDigits = SECURE_RANDOM.nextInt(1000);
         return "ORD" + datePrefix + String.format("%07d", timestampSuffix) + String.format("%03d", randomDigits);
     }
 

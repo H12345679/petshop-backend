@@ -4,7 +4,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.util.Random;
+import java.security.SecureRandom;
 
 /**
  * Mock AI 实现：返回宠物养护相关的预设回答。
@@ -14,7 +14,7 @@ import java.util.Random;
 @ConditionalOnProperty(prefix = "ai", name = "provider", havingValue = "mock", matchIfMissing = true)
 public class MockAiProvider implements AiProvider {
 
-    private final Random random = new Random();
+    private final SecureRandom random = new SecureRandom();
 
     private static final List<String> ANSWERS = List.of(
         "猫咪拉肚子可能由于饮食不当、寄生虫或受凉引起。如果是轻微消化不良，可以禁食半天并喂食益生菌调理；如果是持续腹泻，建议前往宠物医院检查，切勿盲目乱用人药。",
