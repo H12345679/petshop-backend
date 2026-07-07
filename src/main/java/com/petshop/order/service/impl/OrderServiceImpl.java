@@ -88,6 +88,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     private OwnershipChecker ownershipChecker;
     @Autowired
     private RefundMapper refundMapper;
+    @Autowired
+    private ReviewMapper reviewMapper;
     /** 直接注入 RedisTemplate 用于 increment 操作 */
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
@@ -168,16 +170,26 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             throw new BusinessException("购买项不能为空");
         }
 
+        // 幂等性校验：通过 requestId 检查是否已处理过该请求，防止由于网络延迟或重复点击导致重复下单
+        // 如果在缓存中找到了该 requestId 对应的结果，说明这是重复请求，直接返回上次生成的订单信息
         Map<String, Object> cached = checkIdempotency(requestId);
         if (cached != null) return cached;
 
         Address address = addressMapper.selectById(validateAddressId(addressId, userId));
 
+        // 将前端传来的原始购买参数（Map格式）解析并转换为内部使用的 ItemLine 实体对象列表
+        // 注意：在这个转换方法内部，系统会去数据库查询真实数据，并进行“商品是否存在/上架”、“价格校验”以及“库存是否充足”等关键业务校验
         List<ItemLine> itemLines = buildItemLines(items);
 
+        // 按店铺ID将购买的商品进行分组，为后续的“跨店拆单”做准备
+        // 如果用户购物车里包含了多个不同店铺的商品，这里会将它们归类，后续为每个店铺单独生成一个子订单
+        // 使用 LinkedHashMap 是为了保持商品原有的排列顺序
         Map<Long, List<ItemLine>> grouped = itemLines.stream()
                 .collect(Collectors.groupingBy(ItemLine::getShopId, LinkedHashMap::new, Collectors.toList()));
 
+        // 遍历所有购买项，计算出：这笔大单“总共原本应该收多少钱”（即各个商品的原价 * 数量 之和）
+        // .map(...)：针对每一种商品算出它的小计金额（单价 x 购买数量）
+        // .reduce(...)：将所有商品的小计金额全部累加在一起，得到大单总金额
         BigDecimal totalOrderAmount = itemLines.stream()
                 .map(line -> line.price.multiply(BigDecimal.valueOf(line.qty)))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -264,7 +276,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (status != null) {
             wrapper.eq(Order::getStatus, status);
         } else {
-            // Exclude orders in "Refund Processing" (-2) from the general order management list
+            // 在常规的订单管理列表中，排除掉正处于“退款处理中” (-2) 的订单
             wrapper.ne(Order::getStatus, -2);
         }
         wrapper.orderByDesc(Order::getCreateTime);
@@ -359,6 +371,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
 
         List<Order> orders = validateBatchOrders(orderIds, userId);
+        // 遍历所有需要批量支付的子订单，将它们的“实付金额 (payAmount)”提取出来并全部累加
+        // 从而算出用户在收银台这一笔合并付款中，总共需要扣除的合并金额
         BigDecimal totalPayAmount = orders.stream()
                 .map(Order::getPayAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
 
@@ -695,7 +709,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             // 查关联明细
             LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
             oiWrapper.eq(OrderItem::getOrderId, order.getId());
-            vo.put("orderItems", orderItemMapper.selectList(oiWrapper));
+            List<OrderItem> oiList = orderItemMapper.selectList(oiWrapper);
+            markReviewedItems(oiList, order.getId());
+            vo.put("orderItems", oiList);
 
             attachRefundInfo(vo, order);
             records.add(vo);
@@ -741,7 +757,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         // 关联明细
         LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
         oiWrapper.eq(OrderItem::getOrderId, order.getId());
-        vo.put("orderItems", orderItemMapper.selectList(oiWrapper));
+        List<OrderItem> oiList = orderItemMapper.selectList(oiWrapper);
+        markReviewedItems(oiList, order.getId());
+        vo.put("orderItems", oiList);
         attachRefundInfo(vo, order);
         return vo;
     }
@@ -956,6 +974,18 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 .set(UserCoupon::getStatus, 0)
                 .set(UserCoupon::getUsedTime, null)
                 .set(UserCoupon::getOrderId, 0L));
+    }
+
+    private void markReviewedItems(List<OrderItem> items, Long orderId) {
+        List<Review> reviews = reviewMapper.selectList(
+                new LambdaQueryWrapper<Review>().eq(Review::getOrderId, orderId));
+        Set<Long> reviewedIds = new HashSet<>();
+        for (Review r : reviews) {
+            if (r.getOrderItemId() != null) reviewedIds.add(r.getOrderItemId());
+        }
+        for (OrderItem item : items) {
+            item.setReviewed(reviewedIds.contains(item.getId()));
+        }
     }
 
     // ---------- 复杂度拆分辅助方法 ----------

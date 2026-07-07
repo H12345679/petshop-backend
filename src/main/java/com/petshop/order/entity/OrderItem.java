@@ -5,6 +5,7 @@ import com.petshop.common.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import java.math.BigDecimal;
 
 /** 订单明细（下单时存商品快照） */
@@ -30,4 +31,7 @@ public class OrderItem extends BaseEntity {
     private Integer refundStatus;
     /** 取消状态: 0正常 1已取消 */
     private Integer cancelStatus;
+    /** 是否已评价（非DB字段，VO填充） */
+    @TableField(exist = false)
+    private Boolean reviewed;
 }
