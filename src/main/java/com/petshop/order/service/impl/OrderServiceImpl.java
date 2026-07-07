@@ -715,6 +715,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 productSkuMapper.update(null, new LambdaUpdateWrapper<ProductSku>()
                         .eq(ProductSku::getId, oi.getSkuId())
                         .setSql("stock = stock + " + oi.getQuantity()));
+                // 同步回滚主表 stock（主表 stock = 所有 SKU 库存之和）
+                productMapper.update(null, new LambdaUpdateWrapper<Product>()
+                        .eq(Product::getId, oi.getProductId())
+                        .setSql("stock = stock + " + oi.getQuantity()));
             } else {
                 productMapper.update(null, new LambdaUpdateWrapper<Product>()
                         .eq(Product::getId, oi.getProductId())
@@ -970,6 +974,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                     .eq(ProductSku::getId, line.skuId)
                     .ge(ProductSku::getStock, line.qty)
                     .setSql("stock = stock - " + line.qty));
+            if (stockRows == 1) {
+                // 同步扣减主表 stock（主表 stock = 所有 SKU 库存之和）
+                productMapper.update(null, new LambdaUpdateWrapper<Product>()
+                        .eq(Product::getId, line.product.getId())
+                        .setSql("stock = stock - " + line.qty));
+            }
         } else {
             stockRows = productMapper.update(null, new LambdaUpdateWrapper<Product>()
                     .eq(Product::getId, line.product.getId())

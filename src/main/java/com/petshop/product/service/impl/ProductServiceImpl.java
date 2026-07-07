@@ -152,11 +152,18 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         // 5) 第二步入库：再保存商品的 SKU 子表（把刚才拿到的主表 ID 绑定到每一个 SKU 上，形成父子关联）
         List<ProductSku> skus = product.getSkus();
         if (skus != null && !skus.isEmpty()) {
+            int totalStock = 0;
             for (ProductSku sku : skus) {
                 sku.setId(null);
                 sku.setProductId(product.getId());
                 productSkuMapper.insert(sku);
+                totalStock += (sku.getStock() != null ? sku.getStock() : 0);
             }
+            // 有 SKU 时，主表 stock = 所有 SKU 库存之和
+            this.baseMapper.update(null,
+                    new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Product>()
+                            .eq(Product::getId, product.getId())
+                            .set(Product::getStock, totalStock));
         }
     }
 
@@ -206,11 +213,18 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         // 5) 然后再把前端传过来的最新 SKU 列表作为全新的数据，一条条重新插进去
         List<ProductSku> skus = product.getSkus();
         if (skus != null && !skus.isEmpty()) {
+            int totalStock = 0;
             for (ProductSku sku : skus) {
                 sku.setId(null);
                 sku.setProductId(product.getId());
                 productSkuMapper.insert(sku);
+                totalStock += (sku.getStock() != null ? sku.getStock() : 0);
             }
+            // 有 SKU 时，主表 stock = 所有 SKU 库存之和
+            this.baseMapper.update(null,
+                    new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Product>()
+                            .eq(Product::getId, product.getId())
+                            .set(Product::getStock, totalStock));
         }
     }
 
@@ -545,6 +559,12 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         if (updated == 0) {
             throw new BusinessException(ResultCode.ERROR.getCode(), "库存扣减失败，已被抢空请重试");
         }
+        // 同步扣减主表 stock（主表 stock = 所有 SKU 库存之和）
+        this.baseMapper.update(null,
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Product>()
+                        .eq(Product::getId, productId)
+                        .setSql("stock = stock - " + quantity));
+        autoDelistIfOutOfStock(productId);
         return sku.getPrice();
     }
 
@@ -561,7 +581,18 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         if (updated == 0) {
             throw new BusinessException(ResultCode.ERROR.getCode(), "库存扣减失败，已被抢空请重试");
         }
+        autoDelistIfOutOfStock(product.getId());
         return product.getPrice();
+    }
+
+    /** 库存归零时自动下架商品（主表 stock 已保证与 SKU 总和同步） */
+    private void autoDelistIfOutOfStock(Long productId) {
+        this.baseMapper.update(null,
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Product>()
+                        .eq(Product::getId, productId)
+                        .eq(Product::getStatus, 1)
+                        .le(Product::getStock, 0)
+                        .set(Product::getStatus, 0));
     }
 
     @Override
