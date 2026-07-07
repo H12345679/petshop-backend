@@ -53,6 +53,22 @@ public class SysLogController {
             @RequestParam(required = false) String operatorRole,
             @RequestParam(required = false) String remark) {
 
+        LambdaQueryWrapper<OrderStatusLog> w = buildOrderStatusQuery(orderId, operatorRole, remark);
+        Page<OrderStatusLog> page = orderStatusLogMapper.selectPage(new Page<>(current, size), w);
+
+        Map<Long, String> nameMap = buildOperatorNameMap(page.getRecords());
+        List<Map<String, Object>> records = buildOrderStatusVoList(page.getRecords(), nameMap);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("records", records);
+        result.put("total", page.getTotal());
+        result.put("pages", page.getPages());
+        result.put("current", current);
+        result.put("size", size);
+        return Result.success(result);
+    }
+
+    private LambdaQueryWrapper<OrderStatusLog> buildOrderStatusQuery(String orderId, String operatorRole, String remark) {
         LambdaQueryWrapper<OrderStatusLog> w = new LambdaQueryWrapper<>();
         if (orderId != null && !orderId.trim().isEmpty()) {
             w.apply("CAST(order_id AS CHAR) LIKE CONCAT('%',{0},'%')", orderId.trim());
@@ -60,12 +76,12 @@ public class SysLogController {
         if (operatorRole != null && !operatorRole.isEmpty()) w.eq(OrderStatusLog::getOperatorRole, operatorRole);
         if (remark != null && !remark.isEmpty()) w.like(OrderStatusLog::getRemark, remark);
         w.orderByDesc(OrderStatusLog::getCreateTime);
+        return w;
+    }
 
-        Page<OrderStatusLog> page = orderStatusLogMapper.selectPage(new Page<>(current, size), w);
-
-        // 批量查操作人名称
+    private Map<Long, String> buildOperatorNameMap(List<OrderStatusLog> records) {
         Set<Long> operatorIds = new HashSet<>();
-        for (OrderStatusLog log : page.getRecords()) {
+        for (OrderStatusLog log : records) {
             if (log.getOperatorId() != null) operatorIds.add(log.getOperatorId());
         }
         Map<Long, String> nameMap = new HashMap<>();
@@ -75,9 +91,12 @@ public class SysLogController {
                 nameMap.put(u.getId(), u.getNickname() != null ? u.getNickname() : u.getUsername());
             }
         }
+        return nameMap;
+    }
 
-        List<Map<String, Object>> records = new ArrayList<>();
-        for (OrderStatusLog log : page.getRecords()) {
+    private List<Map<String, Object>> buildOrderStatusVoList(List<OrderStatusLog> records, Map<Long, String> nameMap) {
+        List<Map<String, Object>> voList = new ArrayList<>();
+        for (OrderStatusLog log : records) {
             Map<String, Object> vo = new LinkedHashMap<>();
             vo.put("id", log.getId());
             vo.put("orderId", log.getOrderId());
@@ -88,15 +107,8 @@ public class SysLogController {
             vo.put("operatorRole", log.getOperatorRole());
             vo.put("remark", log.getRemark());
             vo.put("createTime", log.getCreateTime());
-            records.add(vo);
+            voList.add(vo);
         }
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("records", records);
-        result.put("total", page.getTotal());
-        result.put("pages", page.getPages());
-        result.put("current", current);
-        result.put("size", size);
-        return Result.success(result);
+        return voList;
     }
 }
