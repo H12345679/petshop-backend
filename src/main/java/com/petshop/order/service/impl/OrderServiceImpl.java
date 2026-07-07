@@ -289,10 +289,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             throw new BusinessException("余额不足");
         }
 
-        // 状态日志
         saveStatusLog(order.getId(), 0, 1, userId, "USER", "用户支付");
+        recordPurchaseBehavior(userId, orderId);
+        settleShopCustomer(order, userId);
+    }
 
-        // 记录购买行为埋点 (4购买)
+    private void recordPurchaseBehavior(Long userId, Long orderId) {
         LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
         oiWrapper.eq(OrderItem::getOrderId, orderId);
         List<OrderItem> items = orderItemMapper.selectList(oiWrapper);
@@ -302,17 +304,17 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             behavior.setProductId(item.getProductId());
             behavior.setBehaviorType(4);
             userBehaviorMapper.insert(behavior);
-            // 购买行为同步发 MQ，更新用户实时标签画像；MQ 不可用不应影响支付
             try {
                 rabbitTemplate.convertAndSend(RabbitMQConfig.RECOMMEND_EXCHANGE,
                         RabbitMQConfig.BEHAVIOR_ROUTING_KEY,
                         new UserBehaviorMessage(userId, item.getProductId(), 4));
             } catch (Exception ignore) {
-                // 忽略：埋点发送失败不影响主流程
+                // 埋点发送失败不影响主流程
             }
         }
+    }
 
-        // 沉淀店铺客户关系
+    private void settleShopCustomer(Order order, Long userId) {
         if (order.getShopId() != null && order.getShopId() > 0) {
             shopCustomerMapper.insertOrUpdatePurchaseTime(order.getShopId(), userId);
         }
@@ -349,7 +351,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 throw new BusinessException("订单状态不允许支付（id=" + order.getId() + "，可能已支付或已取消）");
             }
             saveStatusLog(order.getId(), 0, 1, userId, "USER", "批量支付");
-            recordPurchaseBehavior(order.getId(), userId);
+            recordPurchaseBehavior(userId, order.getId());
             if (order.getShopId() != null && order.getShopId() > 0) {
                 shopCustomerMapper.insertOrUpdatePurchaseTime(order.getShopId(), userId);
             }
@@ -834,33 +836,45 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (userCouponId == null || userCouponId <= 0) {
             return new CouponLockResult(BigDecimal.ZERO, null);
         }
-        UserCoupon userCoupon = userCouponMapper.selectById(userCouponId);
-        if (userCoupon == null || !userCoupon.getUserId().equals(userId)) throw new BusinessException("优惠券不存在");
-        if (userCoupon.getStatus() != null && userCoupon.getStatus() != 0) throw new BusinessException("优惠券已使用或已过期");
-        Coupon coupon = couponMapper.selectById(userCoupon.getCouponId());
-        if (coupon == null || coupon.getStatus() != 1
-                || LocalDateTime.now(ZoneId.systemDefault()).isBefore(coupon.getStartTime())
-                || LocalDateTime.now(ZoneId.systemDefault()).isAfter(coupon.getEndTime())) {
-            throw new BusinessException("优惠券不在有效期");
-        }
+        UserCoupon userCoupon = validateUserCoupon(userCouponId, userId);
+        Coupon coupon = validateCouponPeriod(userCoupon.getCouponId());
         if (totalOrderAmount.compareTo(coupon.getThreshold()) < 0) {
             throw new BusinessException("未达到优惠券门槛（满 " + coupon.getThreshold() + " 可用）");
         }
-        BigDecimal discount = BigDecimal.ZERO;
-        if (coupon.getType() == 1) {
-            discount = coupon.getAmount();
-        } else if (coupon.getType() == 2) {
-            discount = amountAfterMember.multiply(BigDecimal.ONE.subtract(coupon.getAmount()));
+        BigDecimal discount = calcDiscount(coupon, amountAfterMember);
+        casMarkCouponUsed(userCouponId);
+        return new CouponLockResult(discount, userCoupon);
+    }
+
+    private UserCoupon validateUserCoupon(Long userCouponId, Long userId) {
+        UserCoupon uc = userCouponMapper.selectById(userCouponId);
+        if (uc == null || !uc.getUserId().equals(userId)) throw new BusinessException("优惠券不存在");
+        if (uc.getStatus() != null && uc.getStatus() != 0) throw new BusinessException("优惠券已使用或已过期");
+        return uc;
+    }
+
+    private Coupon validateCouponPeriod(Long couponId) {
+        Coupon c = couponMapper.selectById(couponId);
+        LocalDateTime now = LocalDateTime.now(ZoneId.systemDefault());
+        if (c == null || c.getStatus() != 1 || now.isBefore(c.getStartTime()) || now.isAfter(c.getEndTime())) {
+            throw new BusinessException("优惠券不在有效期");
         }
+        return c;
+    }
+
+    private BigDecimal calcDiscount(Coupon coupon, BigDecimal amountAfterMember) {
+        if (coupon.getType() == 1) return coupon.getAmount();
+        if (coupon.getType() == 2) return amountAfterMember.multiply(BigDecimal.ONE.subtract(coupon.getAmount()));
+        return BigDecimal.ZERO;
+    }
+
+    private void casMarkCouponUsed(Long userCouponId) {
         int rows = userCouponMapper.update(null, new LambdaUpdateWrapper<UserCoupon>()
                 .eq(UserCoupon::getId, userCouponId)
                 .eq(UserCoupon::getStatus, 0)
                 .set(UserCoupon::getStatus, 1)
                 .set(UserCoupon::getUsedTime, LocalDateTime.now(ZoneId.systemDefault())));
-        if (rows != 1) {
-            throw new BusinessException("优惠券已被使用");
-        }
-        return new CouponLockResult(discount, userCoupon);
+        if (rows != 1) throw new BusinessException("优惠券已被使用");
     }
 
     private void createShopSubOrder(Long shopId, List<ItemLine> lines, BigDecimal totalOrderAmount,
@@ -987,26 +1001,6 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             orders.add(order);
         }
         return orders;
-    }
-
-    private void recordPurchaseBehavior(Long orderId, Long userId) {
-        LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
-        oiWrapper.eq(OrderItem::getOrderId, orderId);
-        List<OrderItem> items = orderItemMapper.selectList(oiWrapper);
-        for (OrderItem item : items) {
-            UserBehavior behavior = new UserBehavior();
-            behavior.setUserId(userId);
-            behavior.setProductId(item.getProductId());
-            behavior.setBehaviorType(4);
-            userBehaviorMapper.insert(behavior);
-            try {
-                rabbitTemplate.convertAndSend(RabbitMQConfig.RECOMMEND_EXCHANGE,
-                        RabbitMQConfig.BEHAVIOR_ROUTING_KEY,
-                        new UserBehaviorMessage(userId, item.getProductId(), 4));
-            } catch (Exception ignore) {
-                // 埋点发送失败不影响主流程
-            }
-        }
     }
 
     // ---------- 内部 DTO ----------

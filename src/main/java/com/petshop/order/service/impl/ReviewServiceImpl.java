@@ -53,62 +53,75 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
         Long userId = UserContext.getUserId();
         if (userId == null) throw new BusinessException(ResultCode.UNAUTHORIZED);
 
-        // 1) 校验订单
-        Order order = orderMapper.selectById(review.getOrderId());
-        if (order == null) throw new BusinessException(ResultCode.NOT_FOUND);
-        if (!userId.equals(order.getUserId())) throw new BusinessException(ResultCode.FORBIDDEN);
-        if (order.getStatus() == null || order.getStatus() != 3) {
-            throw new BusinessException("仅待评价状态的订单可评价");
-        }
+        Order order = validateReviewOrder(userId, review.getOrderId());
+        OrderItem oi = validateReviewOrderItem(review, order.getId());
+        checkNotDuplicateReview(review.getOrderItemId());
+        validateRating(review.getRating());
 
-        // 2) 校验订单明细
-        OrderItem oi = orderItemMapper.selectById(review.getOrderItemId());
-        if (oi == null || !oi.getOrderId().equals(order.getId())) {
-            throw new BusinessException("订单明细不存在");
-        }
-
-        // 3) 不允许重复评价（uk_item 约束会兜底，这里提前校验给友好提示）
-        LambdaQueryWrapper<Review> existWrapper = new LambdaQueryWrapper<>();
-        existWrapper.eq(Review::getOrderItemId, review.getOrderItemId());
-        if (this.count(existWrapper) > 0) {
-            throw new BusinessException("该商品已评价，不可重复提交");
-        }
-
-        // 4) 评分校验
-        if (review.getRating() == null || review.getRating() < 1 || review.getRating() > 5) {
-            throw new BusinessException("评分必须在 1-5 之间");
-        }
-
-        // 5) 填充字段
         review.setId(null);
         review.setUserId(userId);
         review.setProductId(oi.getProductId());
         review.setShopId(oi.getShopId());
         this.save(review);
 
-        // 6) 检查该订单下所有明细是否都已评价，若全评则订单 3→4
+        tryCompleteOrder(order, userId);
+        return review;
+    }
+
+    private Order validateReviewOrder(Long userId, Long orderId) {
+        Order order = orderMapper.selectById(orderId);
+        if (order == null) throw new BusinessException(ResultCode.NOT_FOUND);
+        if (!userId.equals(order.getUserId())) throw new BusinessException(ResultCode.FORBIDDEN);
+        if (order.getStatus() == null || order.getStatus() != 3) {
+            throw new BusinessException("仅待评价状态的订单可评价");
+        }
+        return order;
+    }
+
+    private OrderItem validateReviewOrderItem(Review review, Long orderId) {
+        OrderItem oi = orderItemMapper.selectById(review.getOrderItemId());
+        if (oi == null || !oi.getOrderId().equals(orderId)) {
+            throw new BusinessException("订单明细不存在");
+        }
+        return oi;
+    }
+
+    private void checkNotDuplicateReview(Long orderItemId) {
+        LambdaQueryWrapper<Review> existWrapper = new LambdaQueryWrapper<>();
+        existWrapper.eq(Review::getOrderItemId, orderItemId);
+        if (this.count(existWrapper) > 0) {
+            throw new BusinessException("该商品已评价，不可重复提交");
+        }
+    }
+
+    private void validateRating(Integer rating) {
+        if (rating == null || rating < 1 || rating > 5) {
+            throw new BusinessException("评分必须在 1-5 之间");
+        }
+    }
+
+    private void tryCompleteOrder(Order order, Long userId) {
         List<OrderItem> allItems = orderItemMapper.selectList(
                 new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOrderId, order.getId()));
         LambdaQueryWrapper<Review> orderReviewWrapper = new LambdaQueryWrapper<>();
         orderReviewWrapper.eq(Review::getOrderId, order.getId());
         long reviewedCount = this.count(orderReviewWrapper);
 
-        if (reviewedCount >= allItems.size()) {
-            int from = order.getStatus();
-            OrderStatus.checkTransition(from, 4);
-            order.setStatus(4);
-            orderMapper.updateById(order);
+        if (reviewedCount < allItems.size()) return;
 
-            OrderStatusLog log = new OrderStatusLog();
-            log.setOrderId(order.getId());
-            log.setFromStatus(from);
-            log.setToStatus(4);
-            log.setOperatorId(userId);
-            log.setOperatorRole("USER");
-            log.setRemark("全部商品已评价，订单完成");
-            orderStatusLogMapper.insert(log);
-        }
-        return review;
+        int from = order.getStatus();
+        OrderStatus.checkTransition(from, 4);
+        order.setStatus(4);
+        orderMapper.updateById(order);
+
+        OrderStatusLog log = new OrderStatusLog();
+        log.setOrderId(order.getId());
+        log.setFromStatus(from);
+        log.setToStatus(4);
+        log.setOperatorId(userId);
+        log.setOperatorRole("USER");
+        log.setRemark("全部商品已评价，订单完成");
+        orderStatusLogMapper.insert(log);
     }
 
     @Override

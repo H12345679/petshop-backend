@@ -41,41 +41,33 @@ public class MembershipLevelServiceImpl implements MembershipLevelService {
         int currentPoints = user.getPoints() != null ? user.getPoints() : 0;
         Long currentLevelId = user.getMemberLevelId() != null ? user.getMemberLevelId() : 0L;
 
-        // 获取当前等级信息
-        MembershipLevel currentLevel = null;
-        String oldLevelName = "非会员";
-        if (currentLevelId > 0) {
-            currentLevel = membershipLevelMapper.selectById(currentLevelId);
-            if (currentLevel != null) {
-                oldLevelName = currentLevel.getName();
-            }
+        MembershipLevel currentLevel = currentLevelId > 0
+                ? membershipLevelMapper.selectById(currentLevelId) : null;
+        String oldLevelName = currentLevel != null ? currentLevel.getName() : "非会员";
+
+        MembershipLevel bestLevel = findBestLevel(listAll(), currentPoints);
+
+        if (bestLevel == null || bestLevel.getId().equals(currentLevelId)) {
+            throw new BusinessException("暂无可升级的会员等级，当前积分：" + currentPoints);
+        }
+        if (currentLevel != null && currentLevel.getLevel() >= bestLevel.getLevel()) {
+            throw new BusinessException("已是最适合的会员等级");
         }
 
-        // 查询所有等级，按 level 升序
-        List<MembershipLevel> allLevels = listAll();
+        user.setMemberLevelId(bestLevel.getId());
+        userMapper.updateById(user);
 
-        // 找到当前积分能达到的最高等级（threshold <= currentPoints 且 threshold > 0）
+        return new UpgradeVO(oldLevelName, bestLevel.getName(), currentPoints);
+    }
+
+    private MembershipLevel findBestLevel(List<MembershipLevel> allLevels, int currentPoints) {
         MembershipLevel bestLevel = null;
         for (MembershipLevel level : allLevels) {
             if (level.getThreshold() <= currentPoints) {
                 bestLevel = level;
             }
         }
-
-        if (bestLevel == null || bestLevel.getId().equals(currentLevelId)) {
-            throw new BusinessException("暂无可升级的会员等级，当前积分：" + currentPoints);
-        }
-
-        // 如果当前等级更高或相同，不需要升级
-        if (currentLevel != null && currentLevel.getLevel() >= bestLevel.getLevel()) {
-            throw new BusinessException("已是最适合的会员等级");
-        }
-
-        // 升级
-        user.setMemberLevelId(bestLevel.getId());
-        userMapper.updateById(user);
-
-        return new UpgradeVO(oldLevelName, bestLevel.getName(), currentPoints);
+        return bestLevel;
     }
 
     @Override

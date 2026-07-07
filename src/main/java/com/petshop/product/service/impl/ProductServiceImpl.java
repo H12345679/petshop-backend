@@ -92,15 +92,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
                 .filter(java.util.Objects::nonNull)
                 .distinct()
                 .collect(java.util.stream.Collectors.toList());
-        java.util.Map<Long, String> shopNameMap = new java.util.HashMap<>();
-        if (!shopIds.isEmpty()) {
-            List<com.petshop.shop.entity.Shop> shops = shopMapper.selectBatchIds(shopIds);
-            for (com.petshop.shop.entity.Shop s : shops) {
-                if (s != null && s.getName() != null && !s.getName().trim().isEmpty()) {
-                    shopNameMap.put(s.getId(), s.getName());
-                }
-            }
-        }
+        java.util.Map<Long, String> shopNameMap = buildShopNameMap(shopIds);
         for (Product p : products) {
             if (p.getShopId() != null && shopNameMap.containsKey(p.getShopId())) {
                 p.setShopName(shopNameMap.get(p.getShopId()));
@@ -108,6 +100,18 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
                 p.setShopName("宠物商城自营");
             }
         }
+    }
+
+    private java.util.Map<Long, String> buildShopNameMap(List<Long> shopIds) {
+        java.util.Map<Long, String> shopNameMap = new java.util.HashMap<>();
+        if (shopIds.isEmpty()) return shopNameMap;
+        List<com.petshop.shop.entity.Shop> shops = shopMapper.selectBatchIds(shopIds);
+        for (com.petshop.shop.entity.Shop s : shops) {
+            if (s != null && s.getName() != null && !s.getName().trim().isEmpty()) {
+                shopNameMap.put(s.getId(), s.getName());
+            }
+        }
+        return shopNameMap;
     }
 
     /**
