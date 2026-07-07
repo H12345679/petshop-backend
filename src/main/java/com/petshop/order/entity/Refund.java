@@ -16,6 +16,8 @@ public class Refund extends BaseEntity {
 
     private String refundNo;
     private Long orderId;
+    /** 关联订单明细ID，NULL=整单退款 */
+    private Long orderItemId;
     private Long userId;
     private BigDecimal amount;
     private String reason;

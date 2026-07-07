@@ -23,7 +23,7 @@ public interface RefundService {
      * @param received   0未收到货 1已收到货
      * @return 退单信息 {refundNo, refundId}
      */
-    Map<String, Object> applyRefund(Long orderId, BigDecimal amount, String reason,
+    Map<String, Object> applyRefund(Long orderId, Long orderItemId, BigDecimal amount, String reason,
                                     Integer refundType, Integer received,
                                     String description, List<String> images);
 

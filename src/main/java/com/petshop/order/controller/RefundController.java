@@ -32,6 +32,7 @@ public class RefundController {
     @PostMapping
     public Result<Map<String, Object>> apply(@RequestBody Map<String, Object> body) {
         Long orderId = toLong(body.get("orderId"));
+        Long orderItemId = toLong(body.get("orderItemId"));
         BigDecimal amount = toBigDecimal(body.get("amount"));
         String reason = (String) body.get("reason");
         // 1仅退款 2退货退款
@@ -45,7 +46,7 @@ public class RefundController {
                 if (o != null) images.add(o.toString());
             }
         }
-        return Result.success(refundService.applyRefund(orderId, amount, reason,
+        return Result.success(refundService.applyRefund(orderId, orderItemId, amount, reason,
                 refundType, received, description, images));
     }
 

@@ -70,59 +70,102 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
 
     @Override
     @Transactional
-    public Map<String, Object> applyRefund(Long orderId, BigDecimal amount, String reason,
+    public Map<String, Object> applyRefund(Long orderId, Long orderItemId, BigDecimal amount, String reason,
                                            Integer refundType, Integer received,
                                            String description, List<String> images) {
         Long userId = UserContext.getUserId();
         if (userId == null) throw new BusinessException(ResultCode.UNAUTHORIZED);
 
-        // 1) 权限与存在性校验：确保要退款的订单是这个用户本人的
         Order order = orderMapper.selectById(orderId);
         if (order == null) throw new BusinessException(ResultCode.NOT_FOUND);
         if (!userId.equals(order.getUserId())) throw new BusinessException(ResultCode.FORBIDDEN);
 
-        // 2) 订单状态校验：只有处于【待收货】、【已收货】、【已评价】这三种售后期的订单，才允许发起退单申请
         int currentStatus = order.getStatus();
-        validateRefundableStatus(currentStatus);
+        // 部分退款中订单保持原状态，允许同一订单其他明细继续申请退款
+        if (currentStatus != -2) {
+            validateRefundableStatus(currentStatus);
+        }
 
-        // 3) 智能纠错与类型判定 (type 1:仅退款, 2:退货退款)
-        int[] typeAndRecv = determineRefundTypeAndReceived(currentStatus, refundType, received);
+        int[] typeAndRecv = determineRefundTypeAndReceived(
+                currentStatus == -2 ? order.getPrevStatus() : currentStatus, refundType, received);
         int type = typeAndRecv[0];
         int recv = typeAndRecv[1];
 
-        // 4) 金额防刷校验：不管用户填多少，退款金额绝不能超过当时买东西时实际掏的钱
-        BigDecimal refundAmount = (amount != null && amount.compareTo(order.getPayAmount()) <= 0)
-                ? amount : order.getPayAmount();
+        // 查询订单明细
+        List<OrderItem> allItems = orderItemMapper.selectList(
+                new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOrderId, orderId));
 
-        // 5) 创建退款工单：记录用户的申请理由和凭证，初始状态设为 0 (等待商家审核)
+        // 定位退款明细
+        OrderItem targetItem = resolveTargetItem(allItems, orderItemId);
+        if (targetItem.getRefundStatus() != null && targetItem.getRefundStatus() != 0) {
+            throw new BusinessException("该商品已在退款流程中，请勿重复申请");
+        }
+        if (targetItem.getCancelStatus() != null && targetItem.getCancelStatus() > 0) {
+            throw new BusinessException("该商品已取消，无法申请退款");
+        }
+
+        // 金额上限取明细实付
+        BigDecimal itemMax = targetItem.getRealPayAmount() != null ? targetItem.getRealPayAmount() : BigDecimal.ZERO;
+        BigDecimal refundAmount = (amount != null && amount.compareTo(itemMax) <= 0) ? amount : itemMax;
+
         Refund refund = new Refund();
         refund.setRefundNo(nextRefundNo());
         refund.setOrderId(orderId);
+        refund.setOrderItemId(targetItem.getId());
         refund.setUserId(userId);
         refund.setAmount(refundAmount);
         refund.setReason(reason);
         refund.setDescription(description);
         refund.setImages(toJsonArray(images));
-        refund.setType(1);   // 1代表是"用户自己发起的申请"
+        refund.setType(1);
         refund.setRefundType(type);
         refund.setReceived(recv);
-        refund.setStatus(0); // 申请中
+        refund.setStatus(0);
         this.save(refund);
 
-        // 6) 冻结主订单：先把主订单原本的状态（比如"待收货"）备份到 prevStatus 里，然后将其标记为 -2 (退款售后中)。
-        // 这样可以防止用户在退款扯皮期间，又手贱去点击"确认收货"或者"去评价"，从而避免整个交易状态乱套。
-        order.setPrevStatus(currentStatus);
-        order.setStatus(-2);
-        orderMapper.updateById(order);
+        // 标记该明细进入退款流程
+        targetItem.setRefundStatus(1);
+        orderItemMapper.updateById(targetItem);
 
-        // 7) 记录操作日志，留档备查
-        String logRemark = resolveRefundLabel(type, recv) + reason;
-        saveStatusLog(orderId, currentStatus, -2, userId, "USER", logRemark);
+        // 判断是否需要冻结整单：所有明细都在退款中(1)或已退款(2)时才冻结
+        boolean allInRefund = allItems.stream().allMatch(i ->
+                i.getId().equals(targetItem.getId()) || isItemInRefundOrDone(i));
+        if (allInRefund && currentStatus != -2) {
+            order.setPrevStatus(currentStatus);
+            order.setStatus(-2);
+            orderMapper.updateById(order);
+            saveStatusLog(orderId, currentStatus, -2, userId, "USER",
+                    resolveRefundLabel(type, recv) + reason);
+        } else {
+            int logFrom = currentStatus == -2 ? -2 : currentStatus;
+            saveStatusLog(orderId, logFrom, logFrom, userId, "USER",
+                    "[部分退款] " + targetItem.getProductName() + " " + resolveRefundLabel(type, recv) + reason);
+        }
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("refundNo", refund.getRefundNo());
         result.put("refundId", refund.getId());
         return result;
+    }
+
+    private OrderItem resolveTargetItem(List<OrderItem> allItems, Long orderItemId) {
+        if (allItems.isEmpty()) throw new BusinessException("订单明细为空");
+        if (orderItemId != null) {
+            return allItems.stream()
+                    .filter(i -> i.getId().equals(orderItemId))
+                    .findFirst()
+                    .orElseThrow(() -> new BusinessException("指定的订单明细不存在"));
+        }
+        // 未指定明细且只有一项 → 退该项
+        if (allItems.size() == 1) return allItems.get(0);
+        throw new BusinessException("该订单含多个商品，请选择要退款的商品");
+    }
+
+    private boolean isItemInRefundOrDone(OrderItem item) {
+        Integer rs = item.getRefundStatus();
+        if (rs != null && rs > 0) return true;
+        Integer cs = item.getCancelStatus();
+        return cs != null && cs > 0;
     }
 
     @Override
@@ -175,7 +218,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         refund.setStatus(4); // 待商家确认收货
         this.updateById(refund);
 
-        saveStatusLog(refund.getOrderId(), -2, -2, userId, "USER",
+        Order order = orderMapper.selectById(refund.getOrderId());
+        int logStatus = (order != null) ? order.getStatus() : -2;
+        saveStatusLog(refund.getOrderId(), logStatus, logStatus, userId, "USER",
                 "用户已寄回退货，快递：" + (courierCompany != null ? courierCompany : "") + " " + trackingNumber.trim());
     }
 
@@ -189,9 +234,6 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         Refund refund = validateRefundForConfirm(refundId);
         Order order = validateOrderForConfirm(refund);
 
-        int from = order.getStatus();
-        OrderStatus.checkTransition(from, -3);
-
         boolean isCourierRefund = isCourierRefund(refund);
         if (!isCourierRefund) {
             refundBalanceCapped(order, refund.getAmount());
@@ -201,11 +243,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         appendAuditRemark(refund, "确认收货：", remark);
         this.updateById(refund);
 
-        order.setStatus(-3);
-        orderMapper.updateById(order);
-
-        saveStatusLog(order.getId(), from, -3, operatorId, role, buildConfirmLogMsg(isCourierRefund, refund));
-        rollbackStock(order.getId());
+        markItemRefunded(refund.getOrderItemId());
+        rollbackStockForItem(refund.getOrderItemId(), order.getId());
+        resolveOrderAfterItemRefund(order, operatorId, role, buildConfirmLogMsg(isCourierRefund, refund));
     }
 
     private Refund validateRefundForConfirm(Long refundId) {
@@ -290,8 +330,12 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         order.setStatus(-4);
         orderMapper.updateById(order);
 
+        // 标记所有明细为已退款
+        orderItemMapper.update(null, new LambdaUpdateWrapper<OrderItem>()
+                .eq(OrderItem::getOrderId, orderId)
+                .set(OrderItem::getRefundStatus, 2));
+
         saveStatusLog(orderId, currentStatus, -4, operatorId, role, reason);
-        // 管理员直退针对已收货订单，用户保留商品，库存不恢复
     }
 
     @Override
@@ -389,9 +433,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         refund.setAuditRemark(auditRemark);
         this.updateById(refund);
 
-        // 主订单继续保持被冻结的 -2 状态，在此环节只追加一条日志
+        int from = order.getStatus();
         String remarkSuffix = (auditRemark != null && !auditRemark.isEmpty()) ? "：" + auditRemark : "";
-        saveStatusLog(order.getId(), -2, -2, operatorId, role,
+        saveStatusLog(order.getId(), from, from, operatorId, role,
                 "同意退货，待用户寄回并填写退货单号" + remarkSuffix);
     }
 
@@ -411,51 +455,49 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
 
         boolean courierRefund = refund.getReceived() != null && refund.getReceived() == 0;
         if (courierRefund) {
-            // 快递退款：用户未收到货，退款已打回余额，但库存需等商家确认快递公司退回后才恢复
             refund.setStatus(4);
             this.updateById(refund);
+            int from = order.getStatus();
             String remarkSuffix = (auditRemark != null && !auditRemark.isEmpty()) ? "：" + auditRemark : "";
-            saveStatusLog(order.getId(), -2, -2, operatorId, role,
+            saveStatusLog(order.getId(), from, from, operatorId, role,
                     "快递退款已打款，待确认快递公司退回货物后恢复库存" + remarkSuffix);
         } else {
-            // 收到货仅退款：用户保留商品，退款打回余额，库存不恢复
-            int from = order.getStatus();
-            OrderStatus.checkTransition(from, -3);
+            // 收到货仅退款：退款到账，标记明细已退款
             refund.setStatus(1);
             this.updateById(refund);
-            order.setStatus(-3);
-            orderMapper.updateById(order);
-            saveStatusLog(order.getId(), from, -3, operatorId, role, auditRemark);
+            markItemRefunded(refund.getOrderItemId());
+            resolveOrderAfterItemRefund(order, operatorId, role, auditRemark);
         }
     }
 
     /** 场景C：驳回退款请求，恢复订单原状态 */
     private void handleRejectRefund(Refund refund, Order order,
                                     Long operatorId, String role, String auditRemark) {
-        int from = order.getStatus();
-        Integer prev = order.getPrevStatus();
-
-        // 确保我们还能找到退款前的状态，否则没法恢复
-        if (prev == null || (prev != 2 && prev != 3 && prev != 4)) {
-            throw new BusinessException("订单数据异常，无法恢复原状态");
-        }
-        OrderStatus.checkTransition(from, prev);
-
-        // 1. 退单盖上"已拒绝"的印章
-        refund.setStatus(2); // 审核拒绝
+        refund.setStatus(2);
         refund.setAuditUserId(operatorId);
         refund.setAuditTime(LocalDateTime.now(ZoneId.systemDefault()));
         refund.setAuditRemark(auditRemark);
         this.updateById(refund);
 
-        // 2. 【核心动作：解冻主订单】
-        // 把之前备份的 prevStatus 取出来还原给订单，同时清空备份字段。
-        // 这样订单就又变回"待收货"或"已收货"了，生命周期继续往下走。
-        order.setStatus(prev);
-        order.setPrevStatus(null);
-        orderMapper.updateById(order);
+        // 恢复明细退款状态
+        resetItemRefundStatus(refund.getOrderItemId());
 
-        saveStatusLog(order.getId(), from, prev, operatorId, role, "驳回：" + auditRemark);
+        int from = order.getStatus();
+        // 检查是否还有其他明细在退款中
+        boolean otherItemsInRefund = hasOtherActiveRefunds(order.getId(), refund.getOrderItemId());
+        if (from == -2 && !otherItemsInRefund) {
+            Integer prev = order.getPrevStatus();
+            if (prev == null || (prev != 2 && prev != 3 && prev != 4)) {
+                throw new BusinessException("订单数据异常，无法恢复原状态");
+            }
+            OrderStatus.checkTransition(from, prev);
+            order.setStatus(prev);
+            order.setPrevStatus(null);
+            orderMapper.updateById(order);
+            saveStatusLog(order.getId(), from, prev, operatorId, role, "驳回：" + auditRemark);
+        } else {
+            saveStatusLog(order.getId(), from, from, operatorId, role, "驳回：" + auditRemark);
+        }
     }
 
     /** 构建退款列表查询条件 */
@@ -517,6 +559,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         vo.put("description", r.getDescription());
         vo.put("images", r.getImages());
         vo.put("type", r.getType());
+        vo.put("orderItemId", r.getOrderItemId());
         vo.put("refundType", r.getRefundType());
         vo.put("received", r.getReceived());
         vo.put("status", r.getStatus());
@@ -530,7 +573,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         vo.put("createTime", r.getCreateTime());
 
         // 查订单明细，计算可退上限 & 商品名
-        populateOrderItems(vo, order.getId());
+        populateOrderItems(vo, order.getId(), r.getOrderItemId());
         return vo;
     }
 
@@ -543,14 +586,23 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
     }
 
     /** 查订单明细，填充商品名和可退上限到VO */
-    private void populateOrderItems(Map<String, Object> vo, Long orderId) {
+    private void populateOrderItems(Map<String, Object> vo, Long orderId, Long orderItemId) {
         LambdaQueryWrapper<OrderItem> oiWrapper = new LambdaQueryWrapper<>();
         oiWrapper.eq(OrderItem::getOrderId, orderId);
         List<OrderItem> items = orderItemMapper.selectList(oiWrapper);
 
         BigDecimal maxRefund = BigDecimal.ZERO;
         String productName = "—";
-        if (!items.isEmpty()) {
+        if (orderItemId != null) {
+            // 按明细退款 — 只显示该明细
+            for (OrderItem oi : items) {
+                if (oi.getId().equals(orderItemId)) {
+                    productName = oi.getProductName() != null ? oi.getProductName() : "商品";
+                    maxRefund = oi.getRealPayAmount() != null ? oi.getRealPayAmount() : BigDecimal.ZERO;
+                    break;
+                }
+            }
+        } else if (!items.isEmpty()) {
             OrderItem firstItem = items.get(0);
             productName = firstItem.getProductName() != null ? firstItem.getProductName() : "商品";
             if (items.size() > 1) {
@@ -591,8 +643,10 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         User user = userMapper.selectById(order.getUserId());
         if (user == null) return;
         user.setBalance(user.getBalance().add(refundAmount));
-        if (order.getPrevStatus() != null && order.getPrevStatus() >= 3) {
-            int pts = order.getPayAmount() != null ? order.getPayAmount().intValue() : 0;
+        Integer prevStatus = order.getPrevStatus() != null ? order.getPrevStatus() : order.getStatus();
+        if (prevStatus >= 3) {
+            // 按退款金额比例扣回积分
+            int pts = refundAmount.intValue();
             int cur = user.getPoints() != null ? user.getPoints() : 0;
             user.setPoints(Math.max(0, cur - pts));
         }
@@ -616,7 +670,103 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         return os != null ? os.getDesc() : String.valueOf(code);
     }
 
-    /** 回滚订单对应商品的库存 */
+    /** 标记某个订单明细为已退款 */
+    private void markItemRefunded(Long orderItemId) {
+        if (orderItemId == null) return;
+        orderItemMapper.update(null, new LambdaUpdateWrapper<OrderItem>()
+                .eq(OrderItem::getId, orderItemId)
+                .set(OrderItem::getRefundStatus, 2));
+    }
+
+    /** 驳回时恢复明细退款状态为正常 */
+    private void resetItemRefundStatus(Long orderItemId) {
+        if (orderItemId == null) return;
+        orderItemMapper.update(null, new LambdaUpdateWrapper<OrderItem>()
+                .eq(OrderItem::getId, orderItemId)
+                .set(OrderItem::getRefundStatus, 0));
+    }
+
+    /** 检查该订单是否还有其他明细正在退款(排除指定明细) */
+    private boolean hasOtherActiveRefunds(Long orderId, Long excludeItemId) {
+        LambdaQueryWrapper<Refund> w = new LambdaQueryWrapper<Refund>()
+                .eq(Refund::getOrderId, orderId)
+                .in(Refund::getStatus, 0, 3, 4);
+        if (excludeItemId != null) {
+            w.ne(Refund::getOrderItemId, excludeItemId);
+        }
+        return this.count(w) > 0;
+    }
+
+    /** 某明细退款完成后，判断整单状态：全部退完→-3，否则恢复原状态 */
+    private void resolveOrderAfterItemRefund(Order order, Long operatorId, String role, String logRemark) {
+        int from = order.getStatus();
+        boolean allDone = allItemsRefunded(order.getId());
+        if (allDone) {
+            int to = -3;
+            if (from != -3) {
+                if (from != -2) {
+                    order.setPrevStatus(from);
+                }
+                order.setStatus(to);
+                orderMapper.updateById(order);
+            }
+            saveStatusLog(order.getId(), from, -3, operatorId, role, logRemark);
+        } else if (from == -2) {
+            // 还有其他未退款的明细在走退款流程，保持-2
+            boolean anyActive = hasOtherActiveRefunds(order.getId(), null);
+            if (anyActive) {
+                saveStatusLog(order.getId(), from, from, operatorId, role, logRemark);
+            } else {
+                // 没有在途退款了但还有正常明细，恢复订单
+                Integer prev = order.getPrevStatus();
+                if (prev != null && prev > 0) {
+                    order.setStatus(prev);
+                    order.setPrevStatus(null);
+                    orderMapper.updateById(order);
+                    saveStatusLog(order.getId(), from, prev, operatorId, role, logRemark);
+                } else {
+                    saveStatusLog(order.getId(), from, from, operatorId, role, logRemark);
+                }
+            }
+        } else {
+            // 订单未冻结（部分退款），保持当前状态
+            saveStatusLog(order.getId(), from, from, operatorId, role, logRemark);
+        }
+    }
+
+    /** 检查订单所有明细是否都已退款完成 */
+    private boolean allItemsRefunded(Long orderId) {
+        List<OrderItem> items = orderItemMapper.selectList(
+                new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOrderId, orderId));
+        return items.stream().allMatch(i ->
+                Integer.valueOf(2).equals(i.getRefundStatus())
+                        || (i.getCancelStatus() != null && i.getCancelStatus() > 0));
+    }
+
+    /** 回滚单个订单明细的库存 */
+    private void rollbackStockForItem(Long orderItemId, Long orderId) {
+        if (orderItemId != null) {
+            OrderItem oi = orderItemMapper.selectById(orderItemId);
+            if (oi != null) {
+                rollbackSingleItem(oi);
+                return;
+            }
+        }
+        rollbackStock(orderId);
+    }
+
+    private void rollbackSingleItem(OrderItem oi) {
+        if (oi.getSkuId() != null && oi.getSkuId() != 0) {
+            productSkuMapper.update(null, new LambdaUpdateWrapper<ProductSku>()
+                    .eq(ProductSku::getId, oi.getSkuId())
+                    .setSql("stock = stock + " + oi.getQuantity()));
+        }
+        productMapper.update(null, new LambdaUpdateWrapper<Product>()
+                .eq(Product::getId, oi.getProductId())
+                .setSql("stock = stock + " + oi.getQuantity()));
+    }
+
+    /** 回滚订单所有商品的库存（整单退款兼容） */
     private void rollbackStock(Long orderId) {
         List<OrderItem> items = orderItemMapper.selectList(
                 new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOrderId, orderId));

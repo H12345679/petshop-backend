@@ -94,12 +94,16 @@ public class OrderController {
         return Result.success(orderService.getOrderById(id, userId));
     }
 
-    @ApiOperation("取消订单（仅 0/1→-1,回滚库存/优惠券/余额）")
+    @ApiOperation("取消订单（仅 0/1→-1,回滚库存/优惠券/余额；传 orderItemId 时部分取消单个商品）")
     @RequireLogin
     @PutMapping("/{id}/cancel")
     public Result<Void> cancel(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         String reason = body.get("cancelReason") != null ? body.get("cancelReason").toString() : "用户取消";
-        orderService.cancel(id, reason);
+        Long orderItemId = null;
+        if (body.get("orderItemId") != null) {
+            orderItemId = Long.valueOf(body.get("orderItemId").toString());
+        }
+        orderService.cancel(id, orderItemId, reason);
         return Result.success();
     }
 

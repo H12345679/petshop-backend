@@ -360,7 +360,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     @Override
     @Transactional
-    public void cancel(Long orderId, String reason) {
+    public void cancel(Long orderId, Long orderItemId, String reason) {
         Long userId = requireUserId();
         Order order = this.getById(orderId);
         if (order == null) throw new BusinessException(ResultCode.NOT_FOUND);
@@ -371,6 +371,14 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             throw new BusinessException("当前状态不可取消（" + statusDesc(from) + "）");
         }
 
+        if (orderItemId != null) {
+            partialCancel(order, orderItemId, userId, from, reason);
+        } else {
+            fullCancel(order, userId, from, reason);
+        }
+    }
+
+    private void fullCancel(Order order, Long userId, int from, String reason) {
         OrderStatus.checkTransition(from, -1);
         int rows = this.baseMapper.update(null, new LambdaUpdateWrapper<Order>()
                 .eq(Order::getId, order.getId())
@@ -384,17 +392,86 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         order.setCancelReason(reason);
         saveStatusLog(order.getId(), from, -1, userId, "USER", reason);
 
-        // 回滚库存
         rollbackStock(order.getId());
-        // 回滚优惠券
         rollbackCoupon(order);
-        // 回滚余额（仅已支付订单）
         if (from == 1) {
             User user = userMapper.selectById(userId);
             if (user != null) {
                 user.setBalance(user.getBalance().add(order.getPayAmount()));
                 userMapper.updateById(user);
             }
+        }
+    }
+
+    private void partialCancel(Order order, Long orderItemId, Long userId, int from, String reason) {
+        List<OrderItem> allItems = orderItemMapper.selectList(
+                new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOrderId, order.getId()));
+
+        OrderItem target = allItems.stream()
+                .filter(i -> i.getId().equals(orderItemId))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException("订单明细不存在"));
+
+        if (target.getCancelStatus() != null && target.getCancelStatus() > 0) {
+            throw new BusinessException("该商品已取消");
+        }
+        if (target.getRefundStatus() != null && target.getRefundStatus() > 0) {
+            throw new BusinessException("该商品在退款流程中，无法取消");
+        }
+
+        target.setCancelStatus(1);
+        orderItemMapper.updateById(target);
+        rollbackSingleItemStock(target);
+
+        if (from == 1) {
+            BigDecimal refundAmt = target.getRealPayAmount() != null ? target.getRealPayAmount() : BigDecimal.ZERO;
+            if (refundAmt.compareTo(BigDecimal.ZERO) > 0) {
+                User user = userMapper.selectById(userId);
+                if (user != null) {
+                    user.setBalance(user.getBalance().add(refundAmt));
+                    userMapper.updateById(user);
+                }
+            }
+        }
+
+        boolean allCancelled = allItems.stream().allMatch(i ->
+                i.getId().equals(orderItemId)
+                        || (i.getCancelStatus() != null && i.getCancelStatus() > 0));
+
+        if (allCancelled) {
+            OrderStatus.checkTransition(from, -1);
+            this.baseMapper.update(null, new LambdaUpdateWrapper<Order>()
+                    .eq(Order::getId, order.getId())
+                    .eq(Order::getStatus, from)
+                    .set(Order::getStatus, -1)
+                    .set(Order::getCancelReason, reason));
+            order.setStatus(-1);
+            saveStatusLog(order.getId(), from, -1, userId, "USER", "全部商品已取消");
+            rollbackCoupon(order);
+        } else {
+            BigDecimal itemPay = target.getRealPayAmount() != null ? target.getRealPayAmount() : BigDecimal.ZERO;
+            BigDecimal itemSub = target.getSubtotal() != null ? target.getSubtotal() : BigDecimal.ZERO;
+            order.setPayAmount(order.getPayAmount().subtract(itemPay));
+            order.setTotalAmount(order.getTotalAmount().subtract(itemSub));
+            order.setDiscountAmount(order.getTotalAmount().subtract(order.getPayAmount()));
+            this.updateById(order);
+            saveStatusLog(order.getId(), from, from, userId, "USER",
+                    "部分取消：" + target.getProductName() + "（" + reason + "）");
+        }
+    }
+
+    private void rollbackSingleItemStock(OrderItem oi) {
+        if (oi.getSkuId() != null && oi.getSkuId() != 0) {
+            productSkuMapper.update(null, new LambdaUpdateWrapper<ProductSku>()
+                    .eq(ProductSku::getId, oi.getSkuId())
+                    .setSql("stock = stock + " + oi.getQuantity()));
+            productMapper.update(null, new LambdaUpdateWrapper<Product>()
+                    .eq(Product::getId, oi.getProductId())
+                    .setSql("stock = stock + " + oi.getQuantity()));
+        } else {
+            productMapper.update(null, new LambdaUpdateWrapper<Product>()
+                    .eq(Product::getId, oi.getProductId())
+                    .setSql("stock = stock + " + oi.getQuantity()));
         }
     }
 
@@ -605,19 +682,52 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      * 否则用户订单页看不到任何退款过的痕迹。
      */
     private void attachRefundInfo(Map<String, Object> vo, Order order) {
-        // 待支付(0)/待发货(1)不可能有退款单；已取消(-1)只能从 0/1 取消，同样不可能有
         if (order.getStatus() == null || order.getStatus() == 0
                 || order.getStatus() == 1 || order.getStatus() == -1) return;
-        Refund refund = refundMapper.selectOne(new LambdaQueryWrapper<Refund>()
+        // 查询所有活跃的退款单（包括被驳回的最新一条）
+        List<Refund> refunds = refundMapper.selectList(new LambdaQueryWrapper<Refund>()
                 .eq(Refund::getOrderId, order.getId())
-                .orderByDesc(Refund::getCreateTime)
-                .last("LIMIT 1"));
-        if (refund == null) return;
-        // 订单不在退款流程中时，只有"已驳回"的退款单需要展示
-        if (order.getStatus() > -2 && (refund.getStatus() == null || refund.getStatus() != 2)) return;
+                .orderByDesc(Refund::getCreateTime));
+        if (refunds.isEmpty()) return;
+
+        // 兼容：保留 refund 字段（最新一条活跃退款或被驳回退款）
+        Refund latest = refunds.get(0);
+        boolean orderInRefund = order.getStatus() <= -2;
+        boolean hasActiveOrRejected = orderInRefund || latest.getStatus() == 2;
+        // 部分退款：订单未冻结但有活跃退款单
+        if (!hasActiveOrRejected) {
+            hasActiveOrRejected = refunds.stream().anyMatch(r ->
+                    r.getStatus() != null && (r.getStatus() == 0 || r.getStatus() == 3 || r.getStatus() == 4));
+        }
+        if (!hasActiveOrRejected) return;
+
+        Map<String, Object> rf = buildRefundMap(latest);
+        vo.put("refund", rf);
+
+        // 附加所有活跃退款的列表（部分退款时前端需展示多条）
+        List<Map<String, Object>> refundList = new ArrayList<>();
+        for (Refund r : refunds) {
+            if (r.getStatus() != null && r.getStatus() != 1 && r.getStatus() != 2) {
+                refundList.add(buildRefundMap(r));
+            }
+        }
+        // 也包含最近被驳回的
+        for (Refund r : refunds) {
+            if (r.getStatus() != null && r.getStatus() == 2) {
+                refundList.add(buildRefundMap(r));
+                break;
+            }
+        }
+        if (!refundList.isEmpty()) {
+            vo.put("refunds", refundList);
+        }
+    }
+
+    private Map<String, Object> buildRefundMap(Refund refund) {
         Map<String, Object> rf = new LinkedHashMap<>();
         rf.put("id", refund.getId());
         rf.put("refundNo", refund.getRefundNo());
+        rf.put("orderItemId", refund.getOrderItemId());
         rf.put(STATUS, refund.getStatus());
         rf.put("refundType", refund.getRefundType());
         rf.put("received", refund.getReceived());
@@ -628,7 +738,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         rf.put("returnCourierCompany", refund.getReturnCourierCompany());
         rf.put("returnTrackingNumber", refund.getReturnTrackingNumber());
         rf.put("returnTime", refund.getReturnTime());
-        vo.put("refund", rf);
+        return rf;
     }
 
     private static final java.security.SecureRandom SECURE_RANDOM = new java.security.SecureRandom();

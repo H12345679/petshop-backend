@@ -26,4 +26,8 @@ public class OrderItem extends BaseEntity {
     private BigDecimal subtotal;
     /** 分摊优惠后实付金额，退款时以此为上限 */
     private BigDecimal realPayAmount;
+    /** 退款状态: 0正常 1退款中 2已退款 */
+    private Integer refundStatus;
+    /** 取消状态: 0正常 1已取消 */
+    private Integer cancelStatus;
 }

@@ -65,12 +65,12 @@ public enum OrderStatus {
         m.put(0, new HashSet<>(Arrays.asList(1, -1)));
         // 1(待发货) -> 2(待收货) | -1(已取消)
         m.put(1, new HashSet<>(Arrays.asList(2, -1)));
-        // 2(待收货) -> 3(待评价) | -2(退款申请中)
-        m.put(2, new HashSet<>(Arrays.asList(3, -2)));
-        // 3(待评价) -> 4(已完成) | -2(退款申请中) | -4(管理员退款)
-        m.put(3, new HashSet<>(Arrays.asList(4, -2, -4)));
-        // 4(已完成/已评价) -> -2(退款申请中，仅限退货退款)
-        m.put(4, new HashSet<>(Arrays.asList(-2)));
+        // 2(待收货) -> 3(待评价) | -2(退款申请中) | -3(部分退款全部完成)
+        m.put(2, new HashSet<>(Arrays.asList(3, -2, -3)));
+        // 3(待评价) -> 4(已完成) | -2(退款申请中) | -3(部分退款全部完成) | -4(管理员退款)
+        m.put(3, new HashSet<>(Arrays.asList(4, -2, -3, -4)));
+        // 4(已完成/已评价) -> -2(退款申请中) | -3(部分退款全部完成)
+        m.put(4, new HashSet<>(Arrays.asList(-2, -3)));
         // -2(退款申请中) -> -3(退款通过) | 2/3/4(驳回恢复原状态)
         m.put(-2, new HashSet<>(Arrays.asList(-3, 2, 3, 4)));
         // 终态不可流转

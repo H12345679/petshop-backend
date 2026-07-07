@@ -26,8 +26,8 @@ public interface OrderService {
     /** 批量支付（合并支付多个订单，一次性扣除总金额）。仅状态 0→1。 */
     void batchPay(List<Long> orderIds, Integer payType);
 
-    /** 取消订单（仅 0/1→-1，恢复库存/优惠券/余额）。 */
-    void cancel(Long orderId, String reason);
+    /** 取消订单（仅 0/1→-1，恢复库存/优惠券/余额）。orderItemId 非空时部分取消单个商品。 */
+    void cancel(Long orderId, Long orderItemId, String reason);
 
     /** 商家发货（ADMIN/MERCHANT，1→2）。 */
     void ship(Long orderId, String courierCompany, String trackingNumber);

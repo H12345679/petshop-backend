@@ -83,6 +83,12 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
         if (oi == null || !oi.getOrderId().equals(orderId)) {
             throw new BusinessException("订单明细不存在");
         }
+        if (oi.getRefundStatus() != null && oi.getRefundStatus() > 0) {
+            throw new BusinessException("该商品正在退款或已退款，无法评价");
+        }
+        if (oi.getCancelStatus() != null && oi.getCancelStatus() > 0) {
+            throw new BusinessException("该商品已取消，无法评价");
+        }
         return oi;
     }
 
@@ -103,11 +109,15 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
     private void tryCompleteOrder(Order order, Long userId) {
         List<OrderItem> allItems = orderItemMapper.selectList(
                 new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOrderId, order.getId()));
+        long needReviewCount = allItems.stream()
+                .filter(i -> (i.getRefundStatus() == null || i.getRefundStatus() == 0)
+                        && (i.getCancelStatus() == null || i.getCancelStatus() == 0))
+                .count();
         LambdaQueryWrapper<Review> orderReviewWrapper = new LambdaQueryWrapper<>();
         orderReviewWrapper.eq(Review::getOrderId, order.getId());
         long reviewedCount = this.count(orderReviewWrapper);
 
-        if (reviewedCount < allItems.size()) return;
+        if (reviewedCount < needReviewCount) return;
 
         int from = order.getStatus();
         OrderStatus.checkTransition(from, 4);
