@@ -186,28 +186,15 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         String role = UserContext.getRole();
         if (operatorId == null) throw new BusinessException(ResultCode.UNAUTHORIZED);
 
-        Refund refund = this.getById(refundId);
-        if (refund == null) throw new BusinessException(ResultCode.NOT_FOUND);
-        if (refund.getStatus() == null || refund.getStatus() != 4) {
-            throw new BusinessException("退单不在待确认收货状态");
-        }
-
-        Order order = orderMapper.selectById(refund.getOrderId());
-        if (order == null) throw new BusinessException("关联订单不存在");
-        ownershipChecker.assertOrderOwned(order.getId());
+        Refund refund = validateRefundForConfirm(refundId);
+        Order order = validateOrderForConfirm(refund);
 
         int from = order.getStatus();
         OrderStatus.checkTransition(from, -3);
 
-        // 快递退款已在审核通过时打款，无需再次退款
-        boolean isCourierRefund = refund.getRefundType() != null && refund.getRefundType() == 1
-                && refund.getReceived() != null && refund.getReceived() == 0;
+        boolean isCourierRefund = isCourierRefund(refund);
         if (!isCourierRefund) {
-            BigDecimal refundAmount = refund.getAmount();
-            if (refundAmount.compareTo(order.getPayAmount()) > 0) {
-                refundAmount = order.getPayAmount();
-            }
-            refundToBalance(order, refundAmount);
+            refundBalanceCapped(order, refund.getAmount());
         }
 
         refund.setStatus(1);
@@ -217,14 +204,41 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         order.setStatus(-3);
         orderMapper.updateById(order);
 
-        String logMsg;
-        if (isCourierRefund) {
-            logMsg = "商家确认已收到快递公司退回货物，库存已恢复";
-        } else {
-            logMsg = "商家确认收到退货（单号 " + refund.getReturnTrackingNumber() + "），退款完成";
-        }
-        saveStatusLog(order.getId(), from, -3, operatorId, role, logMsg);
+        saveStatusLog(order.getId(), from, -3, operatorId, role, buildConfirmLogMsg(isCourierRefund, refund));
         rollbackStock(order.getId());
+    }
+
+    private Refund validateRefundForConfirm(Long refundId) {
+        Refund refund = this.getById(refundId);
+        if (refund == null) throw new BusinessException(ResultCode.NOT_FOUND);
+        if (refund.getStatus() == null || refund.getStatus() != 4) {
+            throw new BusinessException("退单不在待确认收货状态");
+        }
+        return refund;
+    }
+
+    private Order validateOrderForConfirm(Refund refund) {
+        Order order = orderMapper.selectById(refund.getOrderId());
+        if (order == null) throw new BusinessException("关联订单不存在");
+        ownershipChecker.assertOrderOwned(order.getId());
+        return order;
+    }
+
+    private boolean isCourierRefund(Refund refund) {
+        return Integer.valueOf(1).equals(refund.getRefundType())
+                && Integer.valueOf(0).equals(refund.getReceived());
+    }
+
+    private void refundBalanceCapped(Order order, BigDecimal amount) {
+        BigDecimal capped = amount.compareTo(order.getPayAmount()) > 0 ? order.getPayAmount() : amount;
+        refundToBalance(order, capped);
+    }
+
+    private String buildConfirmLogMsg(boolean isCourierRefund, Refund refund) {
+        if (isCourierRefund) {
+            return "商家确认已收到快递公司退回货物，库存已恢复";
+        }
+        return "商家确认收到退货（单号 " + refund.getReturnTrackingNumber() + "），退款完成";
     }
 
     private void appendAuditRemark(Refund refund, String prefix, String remark) {

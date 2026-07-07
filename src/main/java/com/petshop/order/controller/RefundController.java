@@ -28,6 +28,7 @@ public class RefundController {
 
     @ApiOperation("用户申请退单(2/3/4→-2,支持仅退款/退货退款、是否收到货)")
     @RequireLogin
+    @LogOperation("申请退单")
     @PostMapping
     public Result<Map<String, Object>> apply(@RequestBody Map<String, Object> body) {
         Long orderId = toLong(body.get("orderId"));
@@ -61,6 +62,7 @@ public class RefundController {
 
     @ApiOperation("用户填写退货快递单号(退单状态3→4,等待商家确认收货)")
     @RequireLogin
+    @LogOperation("填写退货快递单号")
     @PutMapping("/{id}/return-shipping")
     public Result<Void> returnShipping(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         String courierCompany = (String) body.get("courierCompany");
@@ -71,6 +73,7 @@ public class RefundController {
 
     @ApiOperation("商家确认收到退货并打款(ADMIN·MERCHANT,退单状态4→1,订单-2→-3)")
     @RequireRole({"ADMIN", "MERCHANT"})
+    @LogOperation("确认收货退款")
     @PutMapping("/{id}/confirm-return")
     public Result<Void> confirmReturn(@PathVariable Long id, @RequestBody(required = false) Map<String, Object> body) {
         String remark = body != null ? (String) body.get("remark") : null;
@@ -80,6 +83,7 @@ public class RefundController {
 
     @ApiOperation("管理员直接退单(ADMIN·MERCHANT,3→-4)")
     @RequireRole("ADMIN")
+    @LogOperation("管理员直接退单")
     @PostMapping("/direct")
     public Result<Void> directRefund(@RequestBody Map<String, Object> body) {
         // 支持 orderId 或 orderNo
