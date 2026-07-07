@@ -61,64 +61,51 @@ public class RecommendRankServiceImpl implements RecommendRankService {
         if (userId == null || n <= 0) return new ArrayList<>();
         int candN = n * 3;
 
-        // ===== 召回1：协同过滤（行为） =====
         Map<Long, Double> cfScore = recallCf(userId, candN);
-        // ===== 召回2：标签画像（行为，带衰减后的 Redis 权重） =====
-        Map<Long, Double> profileTagWeight = loadProfileTagWeights(userId); // tagId -> 归一化权重
-        // ===== 召回3：宠物档案标签（个人信息） =====
-        List<String> petTagNames = userPetService.petTagNames(userId);
-        Set<Long> petTagIds = tagIdsByNames(petTagNames);
+        Map<Long, Double> profileTagWeight = loadProfileTagWeights(userId);
+        Set<Long> petTagIds = tagIdsByNames(userPetService.petTagNames(userId));
         List<Integer> mySpecies = userPetService.petSpecies(userId);
 
+        Set<Long> candidateIds = buildCandidateIds(cfScore, profileTagWeight, petTagIds, candN);
+        if (candidateIds.isEmpty()) return fallbackHotSelling(n);
 
-        // 候选池 = 各路并集
-        Set<Long> candidateIds = new LinkedHashSet<>(cfScore.keySet());
-        if (!profileTagWeight.isEmpty()) {
-            // 用标签画像的标签ID去 product_tag 表查哪些商品有这些标签
-            candidateIds.addAll(productIdsByTagIds(profileTagWeight.keySet(), candN));
-        }
-        if (!petTagIds.isEmpty()) {
-            // 同理，宠物档案的标签也去反查商品
-            candidateIds.addAll(productIdsByTagIds(petTagIds, candN));
-        }
-        // 三路全空 → 全局热销兜底
-        if (candidateIds.isEmpty()) {
-            return fallbackHotSelling(n);
-        }
-
-        // 批量取商品（上架）与商品标签
         Map<Long, Product> products = loadActiveProducts(candidateIds);
         if (products.isEmpty()) return new ArrayList<>();
-        Map<Long, Set<Long>> productTags = loadProductTags(products.keySet());
-        Set<Long> recentBought = loadRecentBought(userId);
 
-        // ===== 融合打分 =====
+        List<Object[]> scored = scoreCandidates(products, loadProductTags(products.keySet()),
+                cfScore, profileTagWeight, petTagIds, loadRecentBought(userId), mySpecies);
+        return diversifyResults(scored, products, n);
+    }
+
+    private Set<Long> buildCandidateIds(Map<Long, Double> cfScore,
+                                        Map<Long, Double> profileTagWeight,
+                                        Set<Long> petTagIds, int candN) {
+        Set<Long> ids = new LinkedHashSet<>(cfScore.keySet());
+        if (!profileTagWeight.isEmpty()) {
+            ids.addAll(productIdsByTagIds(profileTagWeight.keySet(), candN));
+        }
+        if (!petTagIds.isEmpty()) {
+            ids.addAll(productIdsByTagIds(petTagIds, candN));
+        }
+        return ids;
+    }
+
+    private List<Object[]> scoreCandidates(Map<Long, Product> products,
+                                           Map<Long, Set<Long>> productTags,
+                                           Map<Long, Double> cfScore,
+                                           Map<Long, Double> profileTagWeight,
+                                           Set<Long> petTagIds,
+                                           Set<Long> recentBought,
+                                           List<Integer> mySpecies) {
         double cfMax = maxValue(cfScore);
-        List<Object[]> scored = new ArrayList<>(); // [productId, finalScore, reason]
+        List<Object[]> scored = new ArrayList<>();
         for (Long pid : products.keySet()) {
             Set<Long> tags = productTags.getOrDefault(pid, Collections.emptySet());
-
-            // 物种冲突硬过滤：有档案时，带物种标签且与我的宠物全不匹配的商品直接不推
             if (!mySpecies.isEmpty() && speciesConflict(tags, mySpecies)) continue;
 
             double cf = cfMax > 0 ? cfScore.getOrDefault(pid, 0.0) / cfMax : 0.0;
-
-            double tagMatch = 0.0;
-            for (Long t : tags) {
-                Double w = profileTagWeight.get(t);
-                if (w != null) tagMatch += w;
-            }
-            if (tagMatch > 1.0) tagMatch = 1.0;
-
-            double pet;
-            if (petTagIds.isEmpty()) {
-                pet = 0.5; // 无档案取中性值，不奖不罚
-            } else {
-                int matched = 0;
-                for (Long t : tags) if (petTagIds.contains(t)) matched++;
-                pet = (double) matched / petTagIds.size();
-                if (pet > 1.0) pet = 1.0;
-            }
+            double tagMatch = calcTagMatch(tags, profileTagWeight);
+            double pet = calcPetMatch(tags, petTagIds);
 
             double score = W_CF * cf + W_TAG * tagMatch + W_PET * pet;
             if (recentBought.contains(pid)) score -= PENALTY_RECENT_BUY;
@@ -127,8 +114,28 @@ public class RecommendRankServiceImpl implements RecommendRankService {
             scored.add(new Object[]{pid, score, pickReason(cf, tagMatch, pet, petTagIds.isEmpty(), mySpecies)});
         }
         scored.sort((a, b) -> Double.compare((double) b[1], (double) a[1]));
+        return scored;
+    }
 
-        // ===== 重排：类目打散（同类目最多 MAX_PER_CATEGORY 个）=====
+    private double calcTagMatch(Set<Long> tags, Map<Long, Double> profileTagWeight) {
+        double tagMatch = 0.0;
+        for (Long t : tags) {
+            Double w = profileTagWeight.get(t);
+            if (w != null) tagMatch += w;
+        }
+        return Math.min(tagMatch, 1.0);
+    }
+
+    private double calcPetMatch(Set<Long> tags, Set<Long> petTagIds) {
+        if (petTagIds.isEmpty()) return 0.5;
+        int matched = 0;
+        for (Long t : tags) {
+            if (petTagIds.contains(t)) matched++;
+        }
+        return Math.min((double) matched / petTagIds.size(), 1.0);
+    }
+
+    private List<Product> diversifyResults(List<Object[]> scored, Map<Long, Product> products, int n) {
         List<Product> result = new ArrayList<>();
         Map<Long, Integer> catCount = new HashMap<>();
         for (Object[] s : scored) {
@@ -141,18 +148,21 @@ public class RecommendRankServiceImpl implements RecommendRankService {
             p.setRecommendReason((String) s[2]);
             result.add(p);
         }
-        // 打散后不足 n，把被打散规则跳过的高分商品补回来
-        if (result.size() < n) {
-            for (Object[] s : scored) {
-                if (result.size() >= n) break;
-                Product p = products.get((Long) s[0]);
-                if (!result.contains(p)) {
-                    p.setRecommendReason((String) s[2]);
-                    result.add(p);
-                }
+        backfillResults(scored, products, result, n);
+        return result;
+    }
+
+    private void backfillResults(List<Object[]> scored, Map<Long, Product> products,
+                                 List<Product> result, int n) {
+        if (result.size() >= n) return;
+        for (Object[] s : scored) {
+            if (result.size() >= n) break;
+            Product p = products.get((Long) s[0]);
+            if (!result.contains(p)) {
+                p.setRecommendReason((String) s[2]);
+                result.add(p);
             }
         }
-        return result;
     }
 
     // ==================== 召回 ====================
@@ -239,9 +249,12 @@ public class RecommendRankServiceImpl implements RecommendRankService {
         Set<Long> ids = new LinkedHashSet<>();
         if (tagIds == null || tagIds.isEmpty()) return ids;
         try {
+            String inSql = String.join(",", java.util.Collections.nCopies(tagIds.size(), "?"));
+            java.util.List<Object> args = new java.util.ArrayList<>(tagIds);
+            args.add(limit);
             List<Long> rows = jdbcTemplate.queryForList(
-                    "SELECT DISTINCT product_id FROM product_tag WHERE tag_id IN (" + joinLongs(tagIds) + ") LIMIT " + limit,
-                    Long.class);
+                    "SELECT DISTINCT product_id FROM product_tag WHERE tag_id IN (" + inSql + ") LIMIT ?",
+                    Long.class, args.toArray());
             ids.addAll(rows);
         } catch (Exception e) {
             log.warn("标签召回失败: {}", e.getMessage());
@@ -266,8 +279,10 @@ public class RecommendRankServiceImpl implements RecommendRankService {
     private Map<Long, Set<Long>> loadProductTags(Collection<Long> productIds) {
         Map<Long, Set<Long>> map = new HashMap<>();
         if (productIds.isEmpty()) return map;
+        String inSql = String.join(",", java.util.Collections.nCopies(productIds.size(), "?"));
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT product_id, tag_id FROM product_tag WHERE product_id IN (" + joinLongs(productIds) + ")");
+                "SELECT product_id, tag_id FROM product_tag WHERE product_id IN (" + inSql + ")",
+                productIds.toArray());
         for (Map<String, Object> r : rows) {
             map.computeIfAbsent(((Number) r.get("product_id")).longValue(), k -> new HashSet<>())
                .add(((Number) r.get("tag_id")).longValue());
@@ -306,13 +321,13 @@ public class RecommendRankServiceImpl implements RecommendRankService {
     }
 
     /** 物种标签 id 缓存（字典极小，直接查一次缓存进内存） */
-    private volatile Map<String, Long> speciesTagIdCache;
+    private volatile java.util.concurrent.ConcurrentMap<String, Long> speciesTagIdCache;
 
     private Long speciesTagId(String name) {
         if (speciesTagIdCache == null) {
             synchronized (this) {
                 if (speciesTagIdCache == null) {
-                    Map<String, Long> m = new HashMap<>();
+                    java.util.concurrent.ConcurrentMap<String, Long> m = new java.util.concurrent.ConcurrentHashMap<>();
                     List<Tag> tags = tagMapper.selectList(new LambdaQueryWrapper<Tag>().in(Tag::getName, SPECIES_TAG.keySet()));
                     for (Tag t : tags) m.put(t.getName(), t.getId());
                     speciesTagIdCache = m;

@@ -118,7 +118,7 @@ public class EmailAuthServiceImpl implements EmailAuthService {
         user.setEmail(email);
         user.setUsername(generateUniqueUsername(email));
         user.setNickname(email.split("@")[0]);
-        user.setPassword("");  // 邮箱注册无密码，填""避免 NOT NULL 报错
+        user.setPassword(java.util.UUID.randomUUID().toString());  // 邮箱注册无密码，填随机字符串避免 NOT NULL 和硬编码报错
         user.setRole("USER");
         user.setMemberLevelId(0L);
         user.setBalance(BigDecimal.ZERO);

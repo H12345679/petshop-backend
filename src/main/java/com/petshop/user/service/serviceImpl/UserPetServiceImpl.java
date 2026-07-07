@@ -64,22 +64,29 @@ public class UserPetServiceImpl extends ServiceImpl<UserPetMapper, UserPet> impl
         if (userId == null) return tags;
         List<UserPet> pets = this.list(new LambdaQueryWrapper<UserPet>().eq(UserPet::getUserId, userId));
         for (UserPet p : pets) {
-            String speciesTag = speciesTagName(p.getSpecies());
-            if (speciesTag != null && !tags.contains(speciesTag)) tags.add(speciesTag);
-
-            // 年龄段：<1岁幼年 1~7成年 >7老年
-            if (p.getBirthday() != null) {
-                int years = Period.between(p.getBirthday(), LocalDate.now()).getYears();
-                String ageTag = years < 1 ? "幼年" : (years <= 7 ? "成年" : "老年");
-                if (!tags.contains(ageTag)) tags.add(ageTag);
-            }
-            // 犬类体型
-            if (p.getSpecies() != null && p.getSpecies() == 2 && p.getWeightKg() != null) {
-                String sizeTag = p.getWeightKg().doubleValue() >= 15 ? "大型犬" : "小型犬";
-                if (!tags.contains(sizeTag)) tags.add(sizeTag);
-            }
+            addSpeciesTag(p, tags);
+            addAgeTag(p, tags);
+            addSizeTag(p, tags);
         }
         return tags;
+    }
+
+    private void addSpeciesTag(UserPet p, List<String> tags) {
+        String speciesTag = speciesTagName(p.getSpecies());
+        if (speciesTag != null && !tags.contains(speciesTag)) tags.add(speciesTag);
+    }
+
+    private void addAgeTag(UserPet p, List<String> tags) {
+        if (p.getBirthday() == null) return;
+        int years = Period.between(p.getBirthday(), LocalDate.now()).getYears();
+        String ageTag = years < 1 ? "幼年" : (years <= 7 ? "成年" : "老年");
+        if (!tags.contains(ageTag)) tags.add(ageTag);
+    }
+
+    private void addSizeTag(UserPet p, List<String> tags) {
+        if (p.getSpecies() == null || p.getSpecies() != 2 || p.getWeightKg() == null) return;
+        String sizeTag = p.getWeightKg().doubleValue() >= 15 ? "大型犬" : "小型犬";
+        if (!tags.contains(sizeTag)) tags.add(sizeTag);
     }
 
     @Override

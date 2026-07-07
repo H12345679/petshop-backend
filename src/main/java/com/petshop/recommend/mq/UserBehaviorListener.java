@@ -30,33 +30,29 @@ public class UserBehaviorListener {
             return;
         }
 
-        Long userId = message.getUserId();
-        Long productId = message.getProductId();
-        Integer behaviorType = message.getBehaviorType();
+        double score = behaviorScore(message.getBehaviorType());
+        if (score < 0) return;
 
-        // 1. 根据行为类型定义权重
-        double score = 0;
-        switch (behaviorType) {
-            case 1: score = 1.0; break; // 浏览
-            case 2: score = 3.0; break; // 收藏
-            case 3: score = 4.0; break; // 加购
-            case 4: score = 5.0; break; // 购买
-            default: return;
-        }
+        List<Long> tagIds = productTagMapper.selectTagIdsByProductId(message.getProductId());
+        if (tagIds == null || tagIds.isEmpty()) return;
 
-        // 2. 查询该商品有哪些标签
-        List<Long> tagIds = productTagMapper.selectTagIdsByProductId(productId);
-        if (tagIds == null || tagIds.isEmpty()) {
-            return; // 商品没有打标签则忽略
-        }
-
-        // 3. 将得分累加到 Redis 的用户画像中 (ZSET)
-        String redisKey = String.format(REDIS_USER_PROFILE_KEY, userId);
+        String redisKey = String.format(REDIS_USER_PROFILE_KEY, message.getUserId());
         for (Long tagId : tagIds) {
             stringRedisTemplate.opsForZSet().incrementScore(redisKey, tagId.toString(), score);
         }
 
-        log.debug("实时更新用户画像成功: userId={}, productId={}, 行为权重={}, 涉及标签={}", 
-                  userId, productId, score, tagIds);
+        log.debug("实时更新用户画像成功: userId={}, productId={}, 行为权重={}, 涉及标签={}",
+                  message.getUserId(), message.getProductId(), score, tagIds);
+    }
+
+    private double behaviorScore(Integer behaviorType) {
+        if (behaviorType == null) return -1;
+        switch (behaviorType) {
+            case 1: return 1.0;
+            case 2: return 3.0;
+            case 3: return 4.0;
+            case 4: return 5.0;
+            default: return -1;
+        }
     }
 }

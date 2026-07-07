@@ -46,31 +46,16 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
         Long userId = requireUserId();
         Long productId = cartItem.getProductId();
         Long skuId = cartItem.getSkuId() == null ? 0L : cartItem.getSkuId();
-        // 确保加车数量至少为 1
         int quantity = cartItem.getQuantity() == null || cartItem.getQuantity() <= 0
                 ? 1 : cartItem.getQuantity();
 
-        // 1) 校验目标商品是否存在且处于上架状态
-        Product product = productMapper.selectById(productId);
-        if (product == null || product.getStatus() == null || product.getStatus() != 1) {
-            throw new BusinessException("商品不存在或已下架");
-        }
+        validateProductAndSku(productId, skuId);
 
-        // 2) 如果该商品拥有多规格（SKU），则校验用户所选的具体规格是否存在且匹配当前商品
-        if (skuId != 0) {
-            ProductSku sku = productSkuMapper.selectById(skuId);
-            if (sku == null || !sku.getProductId().equals(productId)) {
-                throw new BusinessException("商品规格不存在");
-            }
-        }
-
-        // 3) 依靠数据库的唯一约束 (userId, productId, skuId) 判断该商品是否已经在购物车中。
-        // 如果已经存在，则直接累加数量，避免购物车出现重复条目。
         LambdaQueryWrapper<CartItem> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.eq(CartItem::getUserId, userId)
                     .eq(CartItem::getProductId, productId)
                     .eq(CartItem::getSkuId, skuId);
-        
+
         CartItem existingCartItem = this.getOne(queryWrapper);
         if (existingCartItem != null) {
             existingCartItem.setQuantity(existingCartItem.getQuantity() + quantity);
@@ -78,13 +63,25 @@ public class CartServiceImpl extends ServiceImpl<CartItemMapper, CartItem> imple
             return;
         }
 
-        // 4) 如果是不在购物车的新商品，则初始化各项默认值并保存为新条目
         cartItem.setId(null);
         cartItem.setUserId(userId);
         cartItem.setSkuId(skuId);
         cartItem.setQuantity(quantity);
-        cartItem.setSelected(0); // 新加入购物车的商品默认处于“未勾选”状态
+        cartItem.setSelected(0);
         this.save(cartItem);
+    }
+
+    private void validateProductAndSku(Long productId, Long skuId) {
+        Product product = productMapper.selectById(productId);
+        if (product == null || product.getStatus() == null || product.getStatus() != 1) {
+            throw new BusinessException("商品不存在或已下架");
+        }
+        if (skuId != 0) {
+            ProductSku sku = productSkuMapper.selectById(skuId);
+            if (sku == null || !sku.getProductId().equals(productId)) {
+                throw new BusinessException("商品规格不存在");
+            }
+        }
     }
 
     @Override

@@ -253,13 +253,17 @@ public class StatsServiceImpl implements StatsService {
             products = productMapper.selectList(null);
         }
 
-        String[] demoNames = {"蓝猫", "皇家猫粮", "逗猫棒", "金毛犬", "猫砂10kg", "美短", "自动喂食器", "布偶猫", "实木猫爬架", "智能饮水机"};
-        int[] demoSales = {120, 96, 85, 70, 65, 58, 48, 40, 35, 25};
-
-        if (shopIds == null && (products.isEmpty() || products.stream().allMatch(p -> p.getSales() == null || p.getSales() == 0))) {
+        if (shopIds == null && hasNoRealSalesData(products)) {
+            String[] demoNames = {"蓝猫", "皇家猫粮", "逗猫棒", "金毛犬", "猫砂10kg", "美短", "自动喂食器", "布偶猫", "实木猫爬架", "智能饮水机"};
+            int[] demoSales = {120, 96, 85, 70, 65, 58, 48, 40, 35, 25};
             return buildDemoProductSales(limit, demoNames, demoSales);
         }
         return buildRealProductSales(products, limit);
+    }
+
+    private boolean hasNoRealSalesData(List<Product> products) {
+        return products.isEmpty()
+                || products.stream().allMatch(p -> p.getSales() == null || p.getSales() == 0);
     }
 
     @Override

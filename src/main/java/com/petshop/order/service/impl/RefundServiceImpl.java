@@ -206,10 +206,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         refundToBalance(order, refundAmount);
 
         refund.setStatus(1); // 已退款(结束)
-        if (remark != null && !remark.trim().isEmpty()) {
-            String old = refund.getAuditRemark();
-            refund.setAuditRemark((old != null && !old.isEmpty() ? old + ";" : "") + "确认收货：" + remark.trim());
-        }
+        appendAuditRemark(refund, "确认收货：", remark);
         this.updateById(refund);
 
         order.setStatus(-3);
@@ -218,6 +215,13 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
         saveStatusLog(order.getId(), from, -3, operatorId, role,
                 "商家确认收到退货（单号 " + refund.getReturnTrackingNumber() + "），退款完成");
         rollbackStock(order.getId());
+    }
+
+    private void appendAuditRemark(Refund refund, String prefix, String remark) {
+        if (remark == null || remark.trim().isEmpty()) return;
+        String old = refund.getAuditRemark();
+        String base = (old != null && !old.isEmpty()) ? old + ";" : "";
+        refund.setAuditRemark(base + prefix + remark.trim());
     }
 
     @Override

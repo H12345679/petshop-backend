@@ -69,11 +69,15 @@ public class AddressServiceImpl implements AddressService {
             throw new BusinessException(ResultCode.FORBIDDEN);
         }
 
-        // 如果本次要设为默认，先清除其他默认
         if (dto.getIsDefault() != null && dto.getIsDefault() == 1) {
             clearUserDefault(userId);
         }
 
+        applyPartialUpdate(addr, dto);
+        addressMapper.updateById(addr);
+    }
+
+    private void applyPartialUpdate(Address addr, AddressDTO dto) {
         if (dto.getReceiver() != null) addr.setReceiver(dto.getReceiver());
         if (dto.getPhone() != null) addr.setPhone(dto.getPhone());
         if (dto.getProvince() != null) addr.setProvince(dto.getProvince());
@@ -83,8 +87,6 @@ public class AddressServiceImpl implements AddressService {
         if (dto.getLongitude() != null) addr.setLongitude(dto.getLongitude());
         if (dto.getLatitude() != null) addr.setLatitude(dto.getLatitude());
         if (dto.getIsDefault() != null) addr.setIsDefault(dto.getIsDefault());
-
-        addressMapper.updateById(addr);
     }
 
     @Override
