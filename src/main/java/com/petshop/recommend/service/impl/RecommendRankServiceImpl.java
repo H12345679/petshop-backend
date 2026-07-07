@@ -12,7 +12,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -29,7 +30,7 @@ import java.util.*;
 public class RecommendRankServiceImpl implements RecommendRankService {
 
     @Autowired
-    private JdbcTemplate jdbcTemplate;
+    private NamedParameterJdbcTemplate namedJdbc;
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
     @Autowired
@@ -171,9 +172,12 @@ public class RecommendRankServiceImpl implements RecommendRankService {
     private Map<Long, Double> recallCf(Long userId, int limit) {
         Map<Long, Double> map = new LinkedHashMap<>();
         try {
-            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                    "SELECT product_id, score FROM recommend_result WHERE user_id = ? ORDER BY score DESC LIMIT ?",
-                    userId, limit);
+            MapSqlParameterSource params = new MapSqlParameterSource();
+            params.addValue("userId", userId);
+            params.addValue("limit", limit);
+            List<Map<String, Object>> rows = namedJdbc.queryForList(
+                    "SELECT product_id, score FROM recommend_result WHERE user_id = :userId ORDER BY score DESC LIMIT :limit",
+                    params);
             for (Map<String, Object> r : rows) {
                 map.put(((Number) r.get("product_id")).longValue(), ((Number) r.get("score")).doubleValue());
             }
@@ -212,11 +216,12 @@ public class RecommendRankServiceImpl implements RecommendRankService {
      */
     private List<Product> fallbackHotSelling(int n) {
         try {
-            List<Long> ids = jdbcTemplate.queryForList(
+            MapSqlParameterSource params = new MapSqlParameterSource("n", n);
+            List<Long> ids = namedJdbc.queryForList(
                     "SELECT oi.product_id FROM order_item oi JOIN orders o ON oi.order_id = o.id " +
                     "WHERE o.status >= 1 AND o.create_time >= NOW() - INTERVAL 30 DAY " +
-                    "GROUP BY oi.product_id ORDER BY COUNT(*) DESC LIMIT ?",
-                    Long.class, n);
+                    "GROUP BY oi.product_id ORDER BY COUNT(*) DESC LIMIT :n",
+                    params, Long.class);
             if (ids.isEmpty()) return new ArrayList<>();
             Map<Long, Product> products = loadActiveProducts(new LinkedHashSet<>(ids));
             List<Product> result = new ArrayList<>();
@@ -249,12 +254,12 @@ public class RecommendRankServiceImpl implements RecommendRankService {
         Set<Long> ids = new LinkedHashSet<>();
         if (tagIds == null || tagIds.isEmpty()) return ids;
         try {
-            String inSql = String.join(",", java.util.Collections.nCopies(tagIds.size(), "?"));
-            java.util.List<Object> args = new java.util.ArrayList<>(tagIds);
-            args.add(limit);
-            List<Long> rows = jdbcTemplate.queryForList(
-                    "SELECT DISTINCT product_id FROM product_tag WHERE tag_id IN (" + inSql + ") LIMIT ?",
-                    Long.class, args.toArray());
+            MapSqlParameterSource params = new MapSqlParameterSource();
+            params.addValue("tagIds", tagIds);
+            params.addValue("limit", limit);
+            List<Long> rows = namedJdbc.queryForList(
+                    "SELECT DISTINCT product_id FROM product_tag WHERE tag_id IN (:tagIds) LIMIT :limit",
+                    params, Long.class);
             ids.addAll(rows);
         } catch (Exception e) {
             log.warn("标签召回失败: {}", e.getMessage());
@@ -279,10 +284,10 @@ public class RecommendRankServiceImpl implements RecommendRankService {
     private Map<Long, Set<Long>> loadProductTags(Collection<Long> productIds) {
         Map<Long, Set<Long>> map = new HashMap<>();
         if (productIds.isEmpty()) return map;
-        String inSql = String.join(",", java.util.Collections.nCopies(productIds.size(), "?"));
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT product_id, tag_id FROM product_tag WHERE product_id IN (" + inSql + ")",
-                productIds.toArray());
+        MapSqlParameterSource params = new MapSqlParameterSource("productIds", productIds);
+        List<Map<String, Object>> rows = namedJdbc.queryForList(
+                "SELECT product_id, tag_id FROM product_tag WHERE product_id IN (:productIds)",
+                params);
         for (Map<String, Object> r : rows) {
             map.computeIfAbsent(((Number) r.get("product_id")).longValue(), k -> new HashSet<>())
                .add(((Number) r.get("tag_id")).longValue());
@@ -294,10 +299,11 @@ public class RecommendRankServiceImpl implements RecommendRankService {
     private Set<Long> loadRecentBought(Long userId) {
         Set<Long> set = new HashSet<>();
         try {
-            List<Long> rows = jdbcTemplate.queryForList(
+            MapSqlParameterSource params = new MapSqlParameterSource("userId", userId);
+            List<Long> rows = namedJdbc.queryForList(
                     "SELECT DISTINCT oi.product_id FROM order_item oi JOIN orders o ON oi.order_id = o.id " +
-                    "WHERE o.user_id = ? AND o.status >= 1 AND o.create_time >= NOW() - INTERVAL 30 DAY",
-                    Long.class, userId);
+                    "WHERE o.user_id = :userId AND o.status >= 1 AND o.create_time >= NOW() - INTERVAL 30 DAY",
+                    params, Long.class);
             set.addAll(rows);
         } catch (Exception e) {
             log.warn("近购查询失败: {}", e.getMessage());
@@ -321,20 +327,24 @@ public class RecommendRankServiceImpl implements RecommendRankService {
     }
 
     /** 物种标签 id 缓存（字典极小，直接查一次缓存进内存） */
-    private volatile java.util.concurrent.ConcurrentMap<String, Long> speciesTagIdCache;
+    private final java.util.concurrent.atomic.AtomicReference<Map<String, Long>> speciesTagIdCache =
+            new java.util.concurrent.atomic.AtomicReference<>();
 
     private Long speciesTagId(String name) {
-        if (speciesTagIdCache == null) {
+        Map<String, Long> cache = speciesTagIdCache.get();
+        if (cache == null) {
             synchronized (this) {
-                if (speciesTagIdCache == null) {
-                    java.util.concurrent.ConcurrentMap<String, Long> m = new java.util.concurrent.ConcurrentHashMap<>();
+                cache = speciesTagIdCache.get();
+                if (cache == null) {
+                    Map<String, Long> m = new HashMap<>();
                     List<Tag> tags = tagMapper.selectList(new LambdaQueryWrapper<Tag>().in(Tag::getName, SPECIES_TAG.keySet()));
                     for (Tag t : tags) m.put(t.getName(), t.getId());
-                    speciesTagIdCache = m;
+                    cache = Collections.unmodifiableMap(m);
+                    speciesTagIdCache.set(cache);
                 }
             }
         }
-        return speciesTagIdCache.get(name);
+        return cache.get(name);
     }
 
     /** 按三路贡献大小挑推荐理由（个人信息路优先展示，演示效果直观） */

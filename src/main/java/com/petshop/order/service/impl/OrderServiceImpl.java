@@ -836,33 +836,45 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (userCouponId == null || userCouponId <= 0) {
             return new CouponLockResult(BigDecimal.ZERO, null);
         }
-        UserCoupon userCoupon = userCouponMapper.selectById(userCouponId);
-        if (userCoupon == null || !userCoupon.getUserId().equals(userId)) throw new BusinessException("优惠券不存在");
-        if (userCoupon.getStatus() != null && userCoupon.getStatus() != 0) throw new BusinessException("优惠券已使用或已过期");
-        Coupon coupon = couponMapper.selectById(userCoupon.getCouponId());
-        if (coupon == null || coupon.getStatus() != 1
-                || LocalDateTime.now(ZoneId.systemDefault()).isBefore(coupon.getStartTime())
-                || LocalDateTime.now(ZoneId.systemDefault()).isAfter(coupon.getEndTime())) {
-            throw new BusinessException("优惠券不在有效期");
-        }
+        UserCoupon userCoupon = validateUserCoupon(userCouponId, userId);
+        Coupon coupon = validateCouponPeriod(userCoupon.getCouponId());
         if (totalOrderAmount.compareTo(coupon.getThreshold()) < 0) {
             throw new BusinessException("未达到优惠券门槛（满 " + coupon.getThreshold() + " 可用）");
         }
-        BigDecimal discount = BigDecimal.ZERO;
-        if (coupon.getType() == 1) {
-            discount = coupon.getAmount();
-        } else if (coupon.getType() == 2) {
-            discount = amountAfterMember.multiply(BigDecimal.ONE.subtract(coupon.getAmount()));
+        BigDecimal discount = calcDiscount(coupon, amountAfterMember);
+        casMarkCouponUsed(userCouponId);
+        return new CouponLockResult(discount, userCoupon);
+    }
+
+    private UserCoupon validateUserCoupon(Long userCouponId, Long userId) {
+        UserCoupon uc = userCouponMapper.selectById(userCouponId);
+        if (uc == null || !uc.getUserId().equals(userId)) throw new BusinessException("优惠券不存在");
+        if (uc.getStatus() != null && uc.getStatus() != 0) throw new BusinessException("优惠券已使用或已过期");
+        return uc;
+    }
+
+    private Coupon validateCouponPeriod(Long couponId) {
+        Coupon c = couponMapper.selectById(couponId);
+        LocalDateTime now = LocalDateTime.now(ZoneId.systemDefault());
+        if (c == null || c.getStatus() != 1 || now.isBefore(c.getStartTime()) || now.isAfter(c.getEndTime())) {
+            throw new BusinessException("优惠券不在有效期");
         }
+        return c;
+    }
+
+    private BigDecimal calcDiscount(Coupon coupon, BigDecimal amountAfterMember) {
+        if (coupon.getType() == 1) return coupon.getAmount();
+        if (coupon.getType() == 2) return amountAfterMember.multiply(BigDecimal.ONE.subtract(coupon.getAmount()));
+        return BigDecimal.ZERO;
+    }
+
+    private void casMarkCouponUsed(Long userCouponId) {
         int rows = userCouponMapper.update(null, new LambdaUpdateWrapper<UserCoupon>()
                 .eq(UserCoupon::getId, userCouponId)
                 .eq(UserCoupon::getStatus, 0)
                 .set(UserCoupon::getStatus, 1)
                 .set(UserCoupon::getUsedTime, LocalDateTime.now(ZoneId.systemDefault())));
-        if (rows != 1) {
-            throw new BusinessException("优惠券已被使用");
-        }
-        return new CouponLockResult(discount, userCoupon);
+        if (rows != 1) throw new BusinessException("优惠券已被使用");
     }
 
     private void createShopSubOrder(Long shopId, List<ItemLine> lines, BigDecimal totalOrderAmount,
