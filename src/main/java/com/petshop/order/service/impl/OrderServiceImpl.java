@@ -768,6 +768,13 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     private Coupon validateUserCoupon(Long userCouponId, Long userId, BigDecimal totalAmount) {
         if (userCouponId == null || userCouponId <= 0) return null;
+        UserCoupon userCoupon = checkUserCouponOwnership(userCouponId, userId);
+        Coupon coupon = couponMapper.selectById(userCoupon.getCouponId());
+        if (!isCouponUsable(coupon, totalAmount)) return null;
+        return coupon;
+    }
+
+    private UserCoupon checkUserCouponOwnership(Long userCouponId, Long userId) {
         UserCoupon userCoupon = userCouponMapper.selectById(userCouponId);
         if (userCoupon == null || !userCoupon.getUserId().equals(userId)) {
             throw new BusinessException("优惠券不存在");
@@ -775,12 +782,14 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (userCoupon.getStatus() != null && userCoupon.getStatus() != 0) {
             throw new BusinessException("优惠券不可用");
         }
-        Coupon coupon = couponMapper.selectById(userCoupon.getCouponId());
-        if (coupon == null || coupon.getStatus() != 1) return null;
+        return userCoupon;
+    }
+
+    private boolean isCouponUsable(Coupon coupon, BigDecimal totalAmount) {
+        if (coupon == null || coupon.getStatus() != 1) return false;
         LocalDateTime now = LocalDateTime.now(ZoneId.systemDefault());
-        if (now.isBefore(coupon.getStartTime()) || now.isAfter(coupon.getEndTime())) return null;
-        if (totalAmount.compareTo(coupon.getThreshold()) < 0) return null;
-        return coupon;
+        if (now.isBefore(coupon.getStartTime()) || now.isAfter(coupon.getEndTime())) return false;
+        return totalAmount.compareTo(coupon.getThreshold()) >= 0;
     }
 
     @SuppressWarnings("unchecked")
