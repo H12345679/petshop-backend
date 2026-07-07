@@ -46,4 +46,8 @@ public class Product extends BaseEntity {
     /** 店铺品牌名称（非数据库字段：返回前后台组装展现） */
     @TableField(exist = false)
     private String shopName;
+
+    /** 推荐理由（非数据库字段：首页个性化推荐透出，如"为你的猫咪挑选"） */
+    @TableField(exist = false)
+    private String recommendReason;
 }

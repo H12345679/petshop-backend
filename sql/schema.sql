@@ -704,6 +704,31 @@ CREATE TABLE `user_oauth` (
 --
 
 --
+-- Table structure for table `user_pet`
+--
+
+DROP TABLE IF EXISTS `user_pet`;
+CREATE TABLE `user_pet` (
+  `id` bigint NOT NULL COMMENT '主键',
+  `user_id` bigint NOT NULL COMMENT '用户id',
+  `name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '宠物昵称',
+  `species` tinyint NOT NULL COMMENT '种类 1猫咪 2狗狗 3兔子 4鸟类 9其他（对齐tag字典）',
+  `breed` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '品种 如英短/金毛',
+  `gender` tinyint DEFAULT NULL COMMENT '1公 2母',
+  `birthday` date DEFAULT NULL COMMENT '生日：<1岁幼年 1~7岁成年 >7岁老年',
+  `weight_kg` decimal(5,2) DEFAULT NULL COMMENT '体重kg：犬≥15大型 <15小型',
+  `sterilized` tinyint DEFAULT NULL COMMENT '是否绝育 0否 1是',
+  `create_time` datetime DEFAULT NULL,
+  `update_time` datetime DEFAULT NULL,
+  `deleted` tinyint NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`) USING BTREE,
+  KEY `idx_user` (`user_id`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC COMMENT='用户宠物档案';
+
+--
+--
+
+--
 -- Table structure for table `user_similarity`
 --
 
