@@ -57,27 +57,38 @@ public class RecommendRankServiceImpl implements RecommendRankService {
         SPECIES_TAG.put("鸟类", 4);
     }
 
+    /**
+     * 为指定用户进行个性化商品推荐（多路召回 -> 综合加权排序 -> 店铺打散 -> 兜底保护）
+     */
     @Override
     public List<Product> rankForUser(Long userId, int n) {
         if (userId == null || n <= 0) return new ArrayList<>();
-        int candN = n * 3;
+        int candN = n * 3; // 放大3倍候选集规模，为后续排序和打散预留充足空间
 
+        // 1. 多路召回特征准备：协同过滤得分、用户画像标签权重、宠物专属标签及物种
         Map<Long, Double> cfScore = recallCf(userId, candN);
         Map<Long, Double> profileTagWeight = loadProfileTagWeights(userId);
         Set<Long> petTagIds = tagIdsByNames(userPetService.petTagNames(userId));
         List<Integer> mySpecies = userPetService.petSpecies(userId);
 
+        // 2. 合并多路召回候选列表；若为冷启动或无候选，降级为热销商品兜底
         Set<Long> candidateIds = buildCandidateIds(cfScore, profileTagWeight, petTagIds, candN);
         if (candidateIds.isEmpty()) return fallbackHotSelling(n);
 
+        // 3. 加载候选上架商品明细
         Map<Long, Product> products = loadActiveProducts(candidateIds);
         if (products.isEmpty()) return new ArrayList<>();
 
+        // 4. 综合加权排序（综合 CF 分数、兴趣匹配、宠物匹配，对跨物种及近期已购进行降权/剔除）
         List<Object[]> scored = scoreCandidates(products, loadProductTags(products.keySet()),
                 cfScore, profileTagWeight, petTagIds, loadRecentBought(userId), mySpecies);
+        // 5. 店铺维度打散去重并截断输出最终 TopN 结果
         return diversifyResults(scored, products, n);
     }
 
+    /**
+     * 合并多路召回候选 ID 列表（去重）
+     */
     private Set<Long> buildCandidateIds(Map<Long, Double> cfScore,
                                         Map<Long, Double> profileTagWeight,
                                         Set<Long> petTagIds, int candN) {
@@ -91,6 +102,9 @@ public class RecommendRankServiceImpl implements RecommendRankService {
         return ids;
     }
 
+    /**
+     * 候选商品综合评分与业务调优（CF分 + 标签分 + 宠物分 - 跨物种拦截 - 近期已买降权）
+     */
     private List<Object[]> scoreCandidates(Map<Long, Product> products,
                                            Map<Long, Set<Long>> productTags,
                                            Map<Long, Double> cfScore,
@@ -98,26 +112,33 @@ public class RecommendRankServiceImpl implements RecommendRankService {
                                            Set<Long> petTagIds,
                                            Set<Long> recentBought,
                                            List<Integer> mySpecies) {
-        double cfMax = maxValue(cfScore);
+        double cfMax = maxValue(cfScore); // 归一化分母
         List<Object[]> scored = new ArrayList<>();
         for (Long pid : products.keySet()) {
             Set<Long> tags = productTags.getOrDefault(pid, Collections.emptySet());
+            //  跨物种拦截：属于其他物种专属商品（如养狗用户遇到猫粮），直接过滤
             if (!mySpecies.isEmpty() && speciesConflict(tags, mySpecies)) continue;
 
             double cf = cfMax > 0 ? cfScore.getOrDefault(pid, 0.0) / cfMax : 0.0;
             double tagMatch = calcTagMatch(tags, profileTagWeight);
             double pet = calcPetMatch(tags, petTagIds);
 
+            // 综合加权计算总分
             double score = W_CF * cf + W_TAG * tagMatch + W_PET * pet;
+            //  频次调优：近 30 天买过的商品扣减惩罚分
             if (recentBought.contains(pid)) score -= PENALTY_RECENT_BUY;
             if (score <= 0) continue;
 
             scored.add(new Object[]{pid, score, pickReason(cf, tagMatch, pet, petTagIds.isEmpty(), mySpecies)});
         }
+        // 按最终综合得分从高到低降序排序
         scored.sort((a, b) -> Double.compare((double) b[1], (double) a[1]));
         return scored;
     }
 
+    /**
+     * 计算兴趣标签画像匹配度（累加命中标签的归一化权重，上限 1.0）
+     */
     private double calcTagMatch(Set<Long> tags, Map<Long, Double> profileTagWeight) {
         double tagMatch = 0.0;
         for (Long t : tags) {
@@ -127,8 +148,11 @@ public class RecommendRankServiceImpl implements RecommendRankService {
         return Math.min(tagMatch, 1.0);
     }
 
+    /**
+     * 计算宠物专属标签匹配度（命中标签数 / 宠物总标签数）
+     */
     private double calcPetMatch(Set<Long> tags, Set<Long> petTagIds) {
-        if (petTagIds.isEmpty()) return 0.5;
+        if (petTagIds.isEmpty()) return 0.5; // 无宠物档案时给予默认中立分
         int matched = 0;
         for (Long t : tags) {
             if (petTagIds.contains(t)) matched++;
@@ -136,6 +160,9 @@ public class RecommendRankServiceImpl implements RecommendRankService {
         return Math.min((double) matched / petTagIds.size(), 1.0);
     }
 
+    /**
+     * 第一轮类目打散：同类目最多限选 MAX_PER_CATEGORY(2) 个，防止单一品类霸屏
+     */
     private List<Product> diversifyResults(List<Object[]> scored, Map<Long, Product> products, int n) {
         List<Product> result = new ArrayList<>();
         Map<Long, Integer> catCount = new HashMap<>();
@@ -144,15 +171,19 @@ public class RecommendRankServiceImpl implements RecommendRankService {
             Product p = products.get((Long) s[0]);
             Long cat = p.getCategoryId() != null ? p.getCategoryId() : -1L;
             int used = catCount.getOrDefault(cat, 0);
-            if (used >= MAX_PER_CATEGORY) continue;
+            if (used >= MAX_PER_CATEGORY) continue; // 超过同类目上限则跳过
             catCount.put(cat, used + 1);
             p.setRecommendReason((String) s[2]);
             result.add(p);
         }
+        // 第二轮：若打散后数量不足目标 N，放开类目限制回填高分剩余商品
         backfillResults(scored, products, result, n);
         return result;
     }
 
+    /**
+     * 第二轮保底回填：放开限制补足剩余推荐位数
+     */
     private void backfillResults(List<Object[]> scored, Map<Long, Product> products,
                                  List<Product> result, int n) {
         if (result.size() >= n) return;
@@ -242,14 +273,21 @@ public class RecommendRankServiceImpl implements RecommendRankService {
 
     // ==================== 数据加载 ====================
 
+    /**
+     * 根据中文标签名称列表，批量查询转换对应的标签 ID 集合（如 ["猫咪", "幼年"] -> [101, 203]）
+     */
     private Set<Long> tagIdsByNames(List<String> names) {
         Set<Long> ids = new LinkedHashSet<>();
         if (names == null || names.isEmpty()) return ids;
+        // 批量查询符合名称的标签实体
         List<Tag> tags = tagMapper.selectList(new LambdaQueryWrapper<Tag>().in(Tag::getName, names));
         for (Tag t : tags) ids.add(t.getId());
         return ids;
     }
 
+    /**
+     * 根据标签 ID 集合，去商品关联表中查询候选商品 ID（即：基于兴趣/宠物标签的召回）
+     */
     private Set<Long> productIdsByTagIds(Collection<Long> tagIds, int limit) {
         Set<Long> ids = new LinkedHashSet<>();
         if (tagIds == null || tagIds.isEmpty()) return ids;
@@ -257,6 +295,7 @@ public class RecommendRankServiceImpl implements RecommendRankService {
             MapSqlParameterSource params = new MapSqlParameterSource();
             params.addValue("tagIds", tagIds);
             params.addValue("limit", limit);
+            // 查出绑定了这些标签的商品去重 ID 列表
             List<Long> rows = namedJdbc.queryForList(
                     "SELECT DISTINCT product_id FROM product_tag WHERE tag_id IN (:tagIds) LIMIT :limit",
                     params, Long.class);
