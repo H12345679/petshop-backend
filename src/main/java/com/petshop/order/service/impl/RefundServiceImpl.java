@@ -175,14 +175,26 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
     }
 
     /**
-     * 判断订单明细是否在退款流程中或者已经退款完毕
+     * 判断某个订单明细（商品）是否已经“作废”
+     * （即：要么正在走售后退款流程，要么在发货前就已经被取消了）
+     * 
+     * 业务应用场景：当用户申请退款时，系统需要检查订单里剩下的商品是不是也都退光了。
+     * 如果这件商品已经被退款或取消，它就不再是“正常有效的商品”了，就会被计入“作废”之列。
+     * 如果订单里所有商品都处于“作废”状态，主订单就会被彻底冻结（状态变为 -2）。
      *
-     * @param item 订单明细
-     * @return true如果在退款流程中或已完成
+     * @param item 订单明细对象
+     * @return true: 该商品已作废（退款中/已退款/已取消）；false: 这是一个正常购买的商品
      */
     private boolean isItemInRefundOrDone(OrderItem item) {
+        // 1. 检查售后退款状态 (RefundStatus)
+        // > 0 表示该商品要么“正在退款中(1)”，要么“已经退款成功(2)”
         Integer rs = item.getRefundStatus();
-        if (rs != null && rs > 0) return true;
+        if (rs != null && rs > 0) {
+            return true;
+        }
+        
+        // 2. 检查售前取消状态 (CancelStatus)
+        // > 0 表示该商品在发货之前，就已经被用户单独取消掉了
         Integer cs = item.getCancelStatus();
         return cs != null && cs > 0;
     }

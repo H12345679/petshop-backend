@@ -374,7 +374,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         // 遍历所有需要批量支付的子订单，将它们的“实付金额 (payAmount)”提取出来并全部累加
         // 从而算出用户在收银台这一笔合并付款中，总共需要扣除的合并金额
         BigDecimal totalPayAmount = orders.stream()
-                .map(Order::getPayAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+                .map(Order::getPayAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         int balRows = userMapper.update(null, new LambdaUpdateWrapper<User>()
                 .eq(User::getId, userId)
@@ -392,7 +393,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                     .set(Order::getPayType, payType != null ? payType : 1)
                     .set(Order::getPayTime, LocalDateTime.now(ZoneId.systemDefault())));
             if (paidRows != 1) {
-                throw new BusinessException("订单状态不允许支付（id=" + order.getId() + "，可能已支付或已取消）");
+                throw new BusinessException("订单状态不允许支付(id=" + order.getId() + "，可能已支付或已取消）");
             }
             saveStatusLog(order.getId(), 0, 1, userId, "USER", "批量支付");
             recordPurchaseBehavior(userId, order.getId());
@@ -415,7 +416,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
         int from = order.getStatus();
         if (from != 0 && from != 1) {
-            throw new BusinessException("当前状态不可取消（" + statusDesc(from) + "）");
+            throw new BusinessException("当前状态不可取消（" + statusDesc(from) + ")");
         }
 
         if (orderItemId != null) {
@@ -498,9 +499,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             }
         }
 
-        boolean allCancelled = allItems.stream().allMatch(i ->
-                i.getId().equals(orderItemId)
-                        || (i.getCancelStatus() != null && i.getCancelStatus() > 0));
+        // 检查订单下的所有商品是否都已经处于取消状态（包含当前正在操作的商品）
+        boolean allCancelled = allItems.stream().allMatch(item -> {
+            boolean isCurrentItem = item.getId().equals(orderItemId);
+            boolean isAlreadyCancelled = item.getCancelStatus() != null && item.getCancelStatus() > 0;
+            return isCurrentItem || isAlreadyCancelled;
+        });
 
         if (allCancelled) {
             OrderStatus.checkTransition(from, -1);
@@ -519,8 +523,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             order.setTotalAmount(order.getTotalAmount().subtract(itemSub));
             order.setDiscountAmount(order.getTotalAmount().subtract(order.getPayAmount()));
             this.updateById(order);
-            saveStatusLog(order.getId(), from, from, userId, "USER",
-                    "部分取消：" + target.getProductName() + "（" + reason + "）");
+            saveStatusLog(order.getId(), from, from, userId, "USER","部分取消：" + target.getProductName() + "(" + reason + ")");
         }
     }
 
@@ -530,16 +533,15 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      * @param oi 订单明细对象
      */
     private void rollbackSingleItemStock(OrderItem oi) {
+        // 1. 无脑回滚总商品 (SPU) 维度的总库存
+        productMapper.update(null, new LambdaUpdateWrapper<Product>()
+                .eq(Product::getId, oi.getProductId())
+                .setSql("stock = stock + " + oi.getQuantity()));
+
+        // 2. 如果这笔订单关联了具体的商品规格 (SKU)，则同步回滚该规格的库存
         if (oi.getSkuId() != null && oi.getSkuId() != 0) {
             productSkuMapper.update(null, new LambdaUpdateWrapper<ProductSku>()
                     .eq(ProductSku::getId, oi.getSkuId())
-                    .setSql("stock = stock + " + oi.getQuantity()));
-            productMapper.update(null, new LambdaUpdateWrapper<Product>()
-                    .eq(Product::getId, oi.getProductId())
-                    .setSql("stock = stock + " + oi.getQuantity()));
-        } else {
-            productMapper.update(null, new LambdaUpdateWrapper<Product>()
-                    .eq(Product::getId, oi.getProductId())
                     .setSql("stock = stock + " + oi.getQuantity()));
         }
     }
@@ -587,6 +589,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
         // 确认收货后赠送积分（= 实付金额向下取整，与结算页"预计赠送"口径一致），用于会员升级
         BigDecimal pay = order.getPayAmount() != null ? order.getPayAmount() : BigDecimal.ZERO;
+        // pay 是订单的实付金额（BigDecimal类型，比如 99.8）
+        // 1. setScale(0): 设置保留 0 位小数
+        // 2. RoundingMode.DOWN: 向下取整截断（即直接抹除小数部分，不进行四舍五入。例如 99.8 变成 99）
+        // 3. intValue(): 将计算后的 BigDecimal 对象转换为基本的 int 整数类型，作为赠送的积分值
         int gained = pay.setScale(0, RoundingMode.DOWN).intValue();
         if (gained > 0) {
             User user = userMapper.selectById(userId);
@@ -771,42 +777,61 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
      * 否则用户订单页看不到任何退款过的痕迹。
      */
     private void attachRefundInfo(Map<String, Object> vo, Order order) {
+        // 1. 拦截不符合条件的订单：待付款(0)、待发货(1)、已取消(-1) 等状态不可能有退款申请，直接跳过以提升性能
         if (order.getStatus() == null || order.getStatus() == 0
                 || order.getStatus() == 1 || order.getStatus() == -1) return;
-        // 查询所有活跃的退款单（包括被驳回的最新一条）
+                
+        // 2. 根据订单ID查询出该订单名下所有的退款记录，并按照创建时间倒序（最新的排最前面）
         List<Refund> refunds = refundMapper.selectList(new LambdaQueryWrapper<Refund>()
                 .eq(Refund::getOrderId, order.getId())
                 .orderByDesc(Refund::getCreateTime));
         if (refunds.isEmpty()) return;
 
-        // 兼容：保留 refund 字段（最新一条活跃退款或被驳回退款）
+        // 获取最新的一条退款记录
         Refund latest = refunds.get(0);
+        
+        // 3. 场景A与B：判断是否存在“整单退款”或“退款刚被驳回”
+        // 场景A（整单退款）：当用户退整个订单时，主订单状态会变成负数(<= -2)被彻底冻结。
         boolean orderInRefund = order.getStatus() <= -2;
+        // 场景B（退款被驳回）：即使订单解冻恢复原状，只要最新退款单状态是2（已驳回），也必须向用户展示驳回提示。
         boolean hasActiveOrRejected = orderInRefund || latest.getStatus() == 2;
-        // 部分退款：订单未冻结但有活跃退款单
+        
+        // 4. 场景C（部分退款）：如果订单主状态没被冻结（比如依然是正常发货2、已收货3），
+        // 此时必须去所有的退款明细单里“海底捞针”，只要发现任何一个商品正在退款，就要触发展示。
         if (!hasActiveOrRejected) {
+            // anyMatch：只要找到一个符合条件的状态就返回 true
             hasActiveOrRejected = refunds.stream().anyMatch(r ->
-                    r.getStatus() != null && (r.getStatus() == 0 || r.getStatus() == 3 || r.getStatus() == 4));
+                    r.getStatus() != null && (
+                        r.getStatus() == 0 || // 0: 退款申请正在审核中
+                        r.getStatus() == 3 || // 3: 商家已同意退货，等待用户寄回
+                        r.getStatus() == 4    // 4: 用户退货已寄出，等待商家确认收货
+                    ));
         }
+        
+        // 如果没有任何活跃或被驳回的退款单（比如退款早就在几个月前成功结束了），就无需特别展示进度条，直接返回
         if (!hasActiveOrRejected) return;
 
+        // 5. 兼容旧版前端：为了防止旧版本前端报错，往 vo 里塞入一个单数的 "refund" 字段，放最新的一条记录
         Map<String, Object> rf = buildRefundMap(latest);
         vo.put("refund", rf);
 
-        // 附加所有活跃退款的列表（部分退款时前端需展示多条）
+        // 6. 适配新版前端(多商品独立退款)：构建一个复数的 "refunds" 数组
         List<Map<String, Object>> refundList = new ArrayList<>();
+        // 6.1 首先，把所有正在进行中（活跃状态：非成功1、非驳回2）的退款单加入数组
         for (Refund r : refunds) {
             if (r.getStatus() != null && r.getStatus() != 1 && r.getStatus() != 2) {
                 refundList.add(buildRefundMap(r));
             }
         }
-        // 也包含最近被驳回的
+        // 6.2 其次，补充最近一次被驳回的记录（必须要让用户在前端看到自己最近被拒了）
         for (Refund r : refunds) {
             if (r.getStatus() != null && r.getStatus() == 2) {
                 refundList.add(buildRefundMap(r));
-                break;
+                break; // 驳回记录只取最近一次即可
             }
         }
+        
+        // 7. 最终将所有需要展示的退款单列表打包塞进返回结果中，供前端 `v-for` 遍历展示进度
         if (!refundList.isEmpty()) {
             vo.put("refunds", refundList);
         }
@@ -976,14 +1001,32 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 .set(UserCoupon::getOrderId, 0L));
     }
 
+    /**
+     * 标记订单中的商品是否已被评价（实现商品评价隔离的核心逻辑）
+     * 
+     * 业务背景：一个订单如果买了狗粮和飞盘，用户可能只评价了狗粮。
+     * 此时前端渲染时，狗粮应该显示“已评价”，而飞盘应该依然显示“去评价”按钮。
+     *
+     * @param items   当前订单下的所有商品明细列表
+     * @param orderId 订单主键ID
+     */
     private void markReviewedItems(List<OrderItem> items, Long orderId) {
+        // 1. 去评价表中，查出这笔订单关联的所有“已发表的评价”
         List<Review> reviews = reviewMapper.selectList(
                 new LambdaQueryWrapper<Review>().eq(Review::getOrderId, orderId));
+                
+        // 2. 搜集所有已经被评价过的“订单明细ID”（存入 HashSet 以便后续 O(1) 极速查找）
         Set<Long> reviewedIds = new HashSet<>();
         for (Review r : reviews) {
-            if (r.getOrderItemId() != null) reviewedIds.add(r.getOrderItemId());
+            // 如果这条评价具体绑定了某个订单明细（商品），就把它记录下来
+            if (r.getOrderItemId() != null) {
+                reviewedIds.add(r.getOrderItemId());
+            }
         }
+        
+        // 3. 遍历当前订单下的所有商品，如果在 HashSet 中能找到对应的 ID，说明这个商品被评价过了
         for (OrderItem item : items) {
+            // 设置该商品的 reviewed 状态（前端会根据这个 boolean 字段来决定是显示“去评价”还是隐藏按钮）
             item.setReviewed(reviewedIds.contains(item.getId()));
         }
     }
