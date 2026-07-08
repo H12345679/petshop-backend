@@ -1,9 +1,9 @@
 spring:
   datasource:
-    url: jdbc:mysql://192.168.226.72:3307/petshop?useUnicode=true&characterEncoding=utf8&serverTimezone=GMT%2B8&useSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://10.22.201.117:3307/petshop?useUnicode=true&characterEncoding=utf8&serverTimezone=GMT%2B8&useSSL=false&allowPublicKeyRetrieval=true
   redis:
-    host: 192.168.226.72
+    host: 10.22.201.117
   rabbitmq:
-    host: 192.168.226.72
+    host: 10.22.201.117
   elasticsearch:
-    uris: http://192.168.226.72:9200
+    uris: http://10.22.201.117:9200
