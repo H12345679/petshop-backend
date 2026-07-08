@@ -115,16 +115,18 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
         Map<Long, Map<Long, Double>> simMap = new HashMap<>();
         List<Long> targetIds = new ArrayList<>(targetToFeatureMap.keySet());
 
+        // 1. 预先计算每个目标的特征向量模长 (L2范数)，避免在两两对比中重复计算
         Map<Long, Double> normMap = new HashMap<>();
         for (Long id : targetIds) {
             normMap.put(id, calculateNorm(targetToFeatureMap.get(id)));
         }
 
+        // 2. 遍历每个目标，计算与其他目标的相似度
         for (int i = 0; i < targetIds.size(); i++) {
             Long targetA = targetIds.get(i);
             double normA = normMap.get(targetA);
             if (normA <= 0) {
-                continue;
+                continue; // 模长为0说明无有效特征，跳过
             }
             Map<Long, Double> featuresA = targetToFeatureMap.get(targetA);
             computePairwiseSimilarity(targetIds, i, featuresA, normA, normMap, targetToFeatureMap, simMap);
@@ -132,6 +134,9 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
         return simMap;
     }
 
+    /**
+     * 计算目标 A 与后续目标 B 的余弦相似度（利用对称矩阵特性，仅遍历 i+1 到 end）
+     */
     private void computePairwiseSimilarity(List<Long> targetIds, int i, Map<Long, Double> featuresA, double normA,
                                            Map<Long, Double> normMap, Map<Long, Map<Long, Double>> targetToFeatureMap,
                                            Map<Long, Map<Long, Double>> simMap) {
@@ -143,15 +148,21 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
                 continue;
             }
             Map<Long, Double> featuresB = targetToFeatureMap.get(targetB);
+            // 余弦相似度公式：cos(θ) = (A · B) / (|A| * |B|)
             double dotProduct = calculateDotProduct(featuresA, featuresB);
             double similarity = dotProduct / (normA * normB);
             if (similarity > 0) {
+                // 双向保存相似度值，构建对称相似度矩阵
                 simMap.computeIfAbsent(targetA, k -> new HashMap<>()).put(targetB, similarity);
                 simMap.computeIfAbsent(targetB, k -> new HashMap<>()).put(targetA, similarity);
             }
         }
     }
 
+    /**
+     * 计算两个特征向量的内积 (Dot Product)
+     * 性能优化：遍历元素较少的 Map 以减少查找次数
+     */
     private double calculateDotProduct(Map<Long, Double> featuresA, Map<Long, Double> featuresB) {
         Map<Long, Double> small = featuresA.size() <= featuresB.size() ? featuresA : featuresB;
         Map<Long, Double> large = (small == featuresA) ? featuresB : featuresA;
@@ -159,12 +170,15 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
         for (Map.Entry<Long, Double> entry : small.entrySet()) {
             Double v = large.get(entry.getKey());
             if (v != null) {
-                dotProduct += entry.getValue() * v;
+                dotProduct += entry.getValue() * v; // 仅计算两集合交集部分的乘积累加
             }
         }
         return dotProduct;
     }
 
+    /**
+     * 计算特征向量的模长 (L2范数: sqrt(Σ(x^2)))
+     */
     private double calculateNorm(Map<Long, Double> features) {
         double sum = 0.0;
         for (Double val : features.values()) {
@@ -202,24 +216,32 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
         }
     }
 
+    /**
+     * 生成双路混合协同过滤推荐结果并批量入库（混合权重：60% Item-CF + 40% User-CF）
+     */
     private void generateAndSaveRecommendations(Map<Long, Map<Long, Double>> userItemMap,
                                                 Map<Long, Map<Long, Double>> itemUserMap,
                                                 Map<Long, Map<Long, Double>> userSim,
                                                 Map<Long, Map<Long, Double>> itemSim) {
+        // 步骤 1：清空历史推荐旧数据，提取当前系统中所有参与评分的商品 ID 列表
         jdbcTemplate.update("DELETE FROM recommend_result");
         List<Object[]> batchArgs = new ArrayList<>();
         List<Long> allItems = new ArrayList<>(itemUserMap.keySet());
 
+        // 步骤 2：预加载全量用户的已下单购买记录表，格式：userId -> {已购productId集合}
         Map<Long, Set<Long>> purchasedMap = loadPurchasedMap();
 
+        // 步骤 3：逐个遍历用户，为每位用户生成专属个性化推荐候选集
         for (Map.Entry<Long, Map<Long, Double>> userEntry : userItemMap.entrySet()) {
             Long userId = userEntry.getKey();
-            Map<Long, Double> history = userEntry.getValue();
+            Map<Long, Double> history = userEntry.getValue(); // 当前用户对各个商品的隐式互动评分记录
             Set<Long> purchasedSet = purchasedMap.getOrDefault(userId, Collections.emptySet());
 
+            // 调用核心打分函数：内部会执行“过滤 purchasedSet 已买同款 -> 计算 ICF 与 UCF 融合分 -> 互动历史提权 1.2 倍”
             List<Map.Entry<Long, Double>> candidates = scoreCandidates(
                     userId, history, purchasedSet, allItems, itemSim, userSim, userItemMap);
 
+            // 步骤 4：按综合得分从高到低降序排列，截取每个用户的 Top N (默认最多 50 名)
             candidates.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
             int limit = Math.min(TOP_N_PER_USER, candidates.size());
             for (int k = 0; k < limit; k++) {
@@ -228,11 +250,15 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
             }
         }
 
+        // 步骤 5：将全量用户的推荐结果通过批量 SQL 一次性快速写入数据库（来源标记 source = 'HYBRID'）
         if (!batchArgs.isEmpty()) {
             jdbcTemplate.batchUpdate("INSERT INTO recommend_result (id, user_id, product_id, score, source, create_time) VALUES (?, ?, ?, ?, ?, NOW())", batchArgs);
         }
     }
 
+    /**
+     * 读取所有用户的历史购买记录（用于后续协同过滤绝对剔除已购同款）
+     */
     private Map<Long, Set<Long>> loadPurchasedMap() {
         Map<Long, Set<Long>> purchasedMap = new HashMap<>();
         List<Map<String, Object>> buyRows = jdbcTemplate.queryForList(
@@ -245,6 +271,10 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
         return purchasedMap;
     }
 
+    /**
+     * 对候选商品进行双路混合加权预测打分与过滤
+     * 业务规则：1. 过滤已下单同款 2. 融合得分 = 0.6*ICF + 0.4*UCF 3. 有过浏览/加购等互动历史则提权 20%(*1.2)
+     */
     private List<Map.Entry<Long, Double>> scoreCandidates(Long userId, Map<Long, Double> history,
                                                           Set<Long> purchasedSet, List<Long> allItems,
                                                           Map<Long, Map<Long, Double>> itemSim,
@@ -252,13 +282,15 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
                                                           Map<Long, Map<Long, Double>> userItemMap) {
         List<Map.Entry<Long, Double>> candidates = new ArrayList<>();
         for (Long itemId : allItems) {
+            // 绝对剔除已买商品：买过则跳过
             if (purchasedSet.contains(itemId)) {
                 continue;
             }
-            double icfScore = predictIcfScore(itemId, history, itemSim);
-            double ucfScore = predictUcfScore(userId, itemId, userSim, userItemMap);
+            double icfScore = predictIcfScore(itemId, history, itemSim);// Item-CF 预测
+            double ucfScore = predictUcfScore(userId, itemId, userSim, userItemMap);// User-CF 预测
             double finalScore = 0.6 * icfScore + 0.4 * ucfScore;
 
+            // 互动提权：用户曾有浏览/收藏/加购，最终分再乘 1.2 提升曝光
             Double existingScore = history.get(itemId);
             if (existingScore != null && existingScore > 0) {
                 finalScore *= 1.2;
@@ -270,6 +302,9 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
         return candidates;
     }
 
+    /**
+     * 基于 Item-CF 预测用户对商品 itemId 的兴趣分（加权平均：相似度 * 历史评分 / 相似度总和）
+     */
     private double predictIcfScore(Long itemId, Map<Long, Double> history, Map<Long, Map<Long, Double>> itemSim) {
         double icfScore = 0.0;
         double icfSimSum = 0.0;
@@ -286,6 +321,9 @@ public class CollaborativeFilteringServiceImpl implements CollaborativeFiltering
         return icfSimSum > 0 ? icfScore / icfSimSum : 0.0;
     }
 
+    /**
+     * 基于 User-CF 预测用户对商品 itemId 的兴趣分（加权平均：用户相似度 * 邻居评分 / 相似度总和）
+     */
     private double predictUcfScore(Long userId, Long itemId, Map<Long, Map<Long, Double>> userSim,
                                    Map<Long, Map<Long, Double>> userItemMap) {
         double ucfScore = 0.0;
