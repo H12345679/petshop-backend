@@ -500,7 +500,12 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         }
         List<Long> tagIds = new java.util.ArrayList<>();
         for (String s : tagIdsStr) {
-            try { tagIds.add(Long.parseLong(s)); } catch (NumberFormatException ignored) { /* non-numeric tag skipped */ }
+            try { 
+                tagIds.add(Long.parseLong(s)); 
+            } 
+            catch (NumberFormatException ignored) { 
+                /* 非数字标签跳过 */ 
+            }
         }
         if (!tagIds.isEmpty()) {
             List<Long> productIds = productTagMapper.selectProductIdsByTagIds(tagIds);
@@ -522,7 +527,9 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
             for (Long id : cfIds) {
                 if (!result.contains(id)) result.add(id);
             }
-        } catch (Exception ignored) { /* recommend_result table may not exist yet */ }
+        } catch (Exception ignored) { 
+            /* recommend_result 表可能尚未创建，忽略异常继续执行 */ 
+        }
     }
 
     @Override

@@ -200,7 +200,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         CouponLockResult couponResult = lockCoupon(userCouponId, userId, totalOrderAmount, amountAfterMember);
 
         BigDecimal totalPayAmount = totalOrderAmount.subtract(couponResult.discount).subtract(totalMemberDiscount);
-        if (totalPayAmount.compareTo(BigDecimal.ZERO) < 0) totalPayAmount = BigDecimal.ZERO;
+        if (totalPayAmount.compareTo(BigDecimal.ZERO) < 0) {
+            totalPayAmount = BigDecimal.ZERO;
+        }
 
         String today = LocalDate.now(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         List<Long> orderIds = new ArrayList<>();
@@ -244,8 +246,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Override
     public Map<String, Object> getOrderById(Long orderId, Long userId) {
         Order order = this.getById(orderId);
-        if (order == null) throw new BusinessException(ResultCode.NOT_FOUND);
-        if (!userId.equals(order.getUserId())) throw new BusinessException(ResultCode.FORBIDDEN);
+        if (order == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND);
+        }
+        if (!userId.equals(order.getUserId())) {
+            throw new BusinessException(ResultCode.FORBIDDEN);
+        }
         return buildOrderMap(order);
     }
 
@@ -296,8 +302,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         Long userId = requireUserId();
 
         Order order = this.baseMapper.selectById(orderId);
-        if (order == null) throw new BusinessException(ResultCode.NOT_FOUND);
-        if (!userId.equals(order.getUserId())) throw new BusinessException(ResultCode.FORBIDDEN);
+        if (order == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND);
+        }
+        if (!userId.equals(order.getUserId())) {
+            throw new BusinessException(ResultCode.FORBIDDEN);
+        }
         if (order.getStatus() == null || order.getStatus() != 0) {
             throw new BusinessException("订单状态不允许支付（当前：" + statusDesc(order.getStatus()) + "）");
         }
@@ -411,8 +421,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     public void cancel(Long orderId, Long orderItemId, String reason) {
         Long userId = requireUserId();
         Order order = this.getById(orderId);
-        if (order == null) throw new BusinessException(ResultCode.NOT_FOUND);
-        if (!userId.equals(order.getUserId())) throw new BusinessException(ResultCode.FORBIDDEN);
+        if (order == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND);
+        }
+        if (!userId.equals(order.getUserId())) {
+            throw new BusinessException(ResultCode.FORBIDDEN);
+        }
 
         int from = order.getStatus();
         if (from != 0 && from != 1) {
@@ -561,8 +575,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         OrderStatus.checkTransition(from, 2);
         order.setStatus(2);
         order.setShipTime(LocalDateTime.now(ZoneId.systemDefault()));
-        if (courierCompany != null) order.setCourierCompany(courierCompany);
-        if (trackingNumber != null) order.setTrackingNumber(trackingNumber);
+        if (courierCompany != null) {
+            order.setCourierCompany(courierCompany);
+        }
+        if (trackingNumber != null) {
+            order.setTrackingNumber(trackingNumber);
+        }
         this.updateById(order);
         saveStatusLog(order.getId(), from, 2, UserContext.getUserId(),
                 UserContext.getRole(), "商家发货");
@@ -655,9 +673,13 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Override
     @Transactional
     public boolean cancelOneIfUnpaid(Long orderId) {
-        if (orderId == null) return false;
+        if (orderId == null) {
+            return false;
+        }
         Order order = this.getById(orderId);
-        if (order == null) return false;
+        if (order == null) {
+            return false;
+        }
         return doTimeoutCancel(order);
     }
 
@@ -673,7 +695,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 .eq(Order::getStatus, 0)
                 .set(Order::getStatus, -1)
                 .set(Order::getCancelReason, "超时未支付，系统自动取消"));
-        if (rows != 1) return false;
+        if (rows != 1) {
+            return false;
+        }
         saveStatusLog(order.getId(), 0, -1, null, "SYSTEM", "超时未支付自动取消");
         rollbackStock(order.getId());
         rollbackCoupon(order);

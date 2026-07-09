@@ -78,11 +78,17 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
                                            Integer refundType, Integer received,
                                            String description, List<String> images) {
         Long userId = UserContext.getUserId();
-        if (userId == null) throw new BusinessException(ResultCode.UNAUTHORIZED);
+        if (userId == null) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED);
+        }
 
         Order order = orderMapper.selectById(orderId);
-        if (order == null) throw new BusinessException(ResultCode.NOT_FOUND);
-        if (!userId.equals(order.getUserId())) throw new BusinessException(ResultCode.FORBIDDEN);
+        if (order == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND);
+        }
+        if (!userId.equals(order.getUserId())) {
+            throw new BusinessException(ResultCode.FORBIDDEN);
+        }
 
         int currentStatus = order.getStatus();
         // 部分退款中订单保持原状态，允许同一订单其他明细继续申请退款
@@ -162,7 +168,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
      * @return 匹配的明细对象
      */
     private OrderItem resolveTargetItem(List<OrderItem> allItems, Long orderItemId) {
-        if (allItems.isEmpty()) throw new BusinessException("订单明细为空");
+        if (allItems.isEmpty()) {
+            throw new BusinessException("订单明细为空");
+        }
         if (orderItemId != null) {
             return allItems.stream()
                     .filter(i -> i.getId().equals(orderItemId))
@@ -170,7 +178,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
                     .orElseThrow(() -> new BusinessException("指定的订单明细不存在"));
         }
         // 未指定明细且只有一项 → 退该项
-        if (allItems.size() == 1) return allItems.get(0);
+        if (allItems.size() == 1) {
+            return allItems.get(0);
+        }
         throw new BusinessException("该订单含多个商品，请选择要退款的商品");
     }
 
@@ -238,14 +248,20 @@ public class RefundServiceImpl extends ServiceImpl<RefundMapper, Refund> impleme
     @Transactional
     public void submitReturnShipping(Long refundId, String courierCompany, String trackingNumber) {
         Long userId = UserContext.getUserId();
-        if (userId == null) throw new BusinessException(ResultCode.UNAUTHORIZED);
+        if (userId == null){
+            throw new BusinessException(ResultCode.UNAUTHORIZED);
+        }
         if (trackingNumber == null || trackingNumber.trim().isEmpty()) {
             throw new BusinessException("请输入退货快递单号");
         }
 
         Refund refund = this.getById(refundId);
-        if (refund == null) throw new BusinessException(ResultCode.NOT_FOUND);
-        if (!userId.equals(refund.getUserId())) throw new BusinessException(ResultCode.FORBIDDEN);
+        if (refund == null){
+            throw new BusinessException(ResultCode.NOT_FOUND);
+        }
+        if (!userId.equals(refund.getUserId())) {
+            throw new BusinessException(ResultCode.FORBIDDEN);
+        }
         if (refund.getStatus() == null || refund.getStatus() != 3) {
             throw new BusinessException("当前退单不在待退货状态，无法填写退货单号");
         }
