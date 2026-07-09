@@ -481,7 +481,9 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
      */
     private List<Long> getRecommendProductIds(long limit) {
         Long userId = UserContext.getUserId();
-        if (userId == null) return java.util.Collections.emptyList();
+        if (userId == null) {
+            return java.util.Collections.emptyList();
+        }
 
         List<Long> result = new java.util.ArrayList<>();
         // 1. 从 Redis 取用户画像 Top 3 标签对应的商品 ID
