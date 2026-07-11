@@ -2,7 +2,7 @@ package com.petshop.ai.model.dto;
 
 import lombok.Data;
 
-import javax.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotBlank;
 
 /** AI 问答请求 */
 @Data

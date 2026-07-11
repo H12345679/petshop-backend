@@ -1,7 +1,7 @@
 package com.petshop.common;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import io.swagger.annotations.ApiModelProperty;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -22,11 +22,11 @@ import java.io.Serializable;
 public class PageQuery implements Serializable {
 
     /** 页码，从 1 开始，默认 1 */
-    @ApiModelProperty(value = "页码（从1开始）", example = "1")
+    @Schema(description = "页码（从1开始）", example = "1")
     private long current = 1;
 
     /** 每页条数，默认 10，最大 100 */
-    @ApiModelProperty(value = "每页条数", example = "10")
+    @Schema(description = "每页条数", example = "10")
     private long size = 10;
 
     /** 最大允许每页条数 */

@@ -14,8 +14,8 @@ import com.petshop.user.model.dto.UserStatusDTO;
 import com.petshop.user.model.vo.UserManageVO;
 import com.petshop.user.model.vo.UserVO;
 import com.petshop.user.service.UserService;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -26,14 +26,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import javax.validation.Valid;
+import jakarta.validation.Valid;
 import java.math.BigDecimal;
 import java.util.Map;
 
 /**
  * 用户接口：查看/修改个人信息（需登录）。
  */
-@Api(tags = "02-用户信息")
+@Tag(name = "02-用户信息")
 @RestController
 @RequestMapping("/api/users")
 public class UserController {
@@ -41,7 +41,7 @@ public class UserController {
     @Autowired
     private UserService userService;
 
-    @ApiOperation("获取当前登录用户信息")
+    @Operation(summary = "获取当前登录用户信息")
     @RequireLogin
     @GetMapping("/me")
     public Result<UserVO> me() {
@@ -50,7 +50,7 @@ public class UserController {
         return Result.success(vo);
     }
 
-    @ApiOperation("修改当前用户信息")
+    @Operation(summary = "修改当前用户信息")
     @RequireLogin
     @PutMapping("/me")
     public Result<Void> updateMe(@RequestBody UpdateUserDTO dto) {
@@ -59,7 +59,7 @@ public class UserController {
         return Result.success();
     }
 
-    @ApiOperation("修改当前用户密码")
+    @Operation(summary = "修改当前用户密码")
     @RequireLogin
     @PutMapping("/me/password")
     public Result<Void> changePassword(@Valid @RequestBody ChangePasswordDTO dto) {
@@ -68,7 +68,7 @@ public class UserController {
         return Result.success();
     }
 
-    @ApiOperation("账户充值（余额充值）")
+    @Operation(summary = "账户充值（余额充值）")
     @RequireLogin
     @PostMapping("/recharge")
     public Result<Map<String, Object>> recharge(@RequestBody Map<String, Object> body) {
@@ -93,7 +93,7 @@ public class UserController {
         return Result.success(Map.of("balance", newBalance));
     }
 
-    @ApiOperation("后台用户管理列表")
+    @Operation(summary = "后台用户管理列表")
     @RequireRole({"ADMIN"})
     @GetMapping("/manage")
     public Result<PageResult<UserManageVO>> manageList(
@@ -107,7 +107,7 @@ public class UserController {
         return Result.success(result);
     }
 
-    @ApiOperation("商家查询本店客户列表")
+    @Operation(summary = "商家查询本店客户列表")
     @RequireRole({"MERCHANT"})
     @GetMapping("/customers")
     public Result<PageResult<UserManageVO>> customerList(
@@ -118,7 +118,7 @@ public class UserController {
         return Result.success(result);
     }
 
-    @ApiOperation("后台启用/禁用用户")
+    @Operation(summary = "后台启用/禁用用户")
     @RequireRole({"ADMIN"})
     @LogOperation("审核/修改用户状态")
     @PutMapping("/{id}/status")
@@ -129,7 +129,7 @@ public class UserController {
         return Result.success();
     }
 
-    @ApiOperation("后台授予/变更用户角色")
+    @Operation(summary = "后台授予/变更用户角色")
     @RequireRole({"ADMIN"})
     @PutMapping("/{id}/role")
     public Result<Void> updateUserRole(

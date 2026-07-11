@@ -9,8 +9,8 @@ import com.petshop.security.RequireRole;
 import com.petshop.shop.entity.Shop;
 import com.petshop.shop.service.ShopPageQuery;
 import com.petshop.shop.service.ShopService;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,7 +21,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import javax.validation.Valid;
+import jakarta.validation.Valid;
 
 /**
  * 商店接口（对应《项目接口设计文档》A 模块 1~5 节）。
@@ -34,7 +34,7 @@ import javax.validation.Valid;
  *   <li>统一返回 Result&lt;T&gt;，异常交给 GlobalExceptionHandler 兜底。</li>
  * </ul>
  */
-@Api(tags = "01-商店")
+@Tag(name = "01-商店")
 @RestController
 @RequestMapping("/api/shops")
 public class ShopController {
@@ -42,7 +42,7 @@ public class ShopController {
     @Autowired
     private ShopService shopService;
 
-    @ApiOperation("创建商店（ADMIN/MERCHANT）")
+    @Operation(summary = "创建商店（ADMIN/MERCHANT）")
     @RequireRole({"ADMIN", "MERCHANT"})
     @PostMapping
     public Result<Shop> create(@Valid @RequestBody Shop shop) {
@@ -50,7 +50,7 @@ public class ShopController {
         return Result.success(shop);
     }
 
-    @ApiOperation("商店详情（公开）")
+    @Operation(summary = "商店详情（公开）")
     @GetMapping("/{id}")
     public Result<Shop> getById(@PathVariable Long id) {
         Shop shop = shopService.getById(id);
@@ -60,7 +60,7 @@ public class ShopController {
         return Result.success(shop);
     }
 
-    @ApiOperation("修改商店（ADMIN/MERCHANT 本店）")
+    @Operation(summary = "修改商店（ADMIN/MERCHANT 本店）")
     @RequireRole({"ADMIN", "MERCHANT"})
     @LogOperation("修改/审核店铺")
     @PutMapping("/{id}")
@@ -69,7 +69,7 @@ public class ShopController {
         return Result.success();
     }
 
-    @ApiOperation("删除商店（逻辑删除，ADMIN/MERCHANT 本店）")
+    @Operation(summary = "删除商店（逻辑删除，ADMIN/MERCHANT 本店）")
     @RequireRole({"ADMIN", "MERCHANT"})
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
@@ -77,7 +77,7 @@ public class ShopController {
         return Result.success();
     }
 
-    @ApiOperation("商店分页查询（公开，支持名称模糊 + 营业状态过滤）")
+    @Operation(summary = "商店分页查询（公开，支持名称模糊 + 营业状态过滤）")
     @GetMapping
     public Result<PageResult<Shop>> page(ShopPageQuery query) {
         return Result.success(shopService.pageShops(query));

@@ -5,7 +5,7 @@ import com.petshop.common.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import javax.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotBlank;
 import java.math.BigDecimal;
 
 /** 商店 */

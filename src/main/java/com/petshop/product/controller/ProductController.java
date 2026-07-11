@@ -7,18 +7,18 @@ import com.petshop.product.entity.Product;
 import com.petshop.product.service.ProductPageQuery;
 import com.petshop.product.service.ProductService;
 import com.petshop.security.RequireRole;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import com.petshop.common.annotation.TrackBehavior;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
-import javax.validation.Valid;
+import jakarta.validation.Valid;
 
 /**
  * 商品接口（对应《项目接口设计文档》A 模块第 7~11 节）。
  */
-@Api(tags = "03-商品")
+@Tag(name = "03-商品")
 @RestController
 @RequestMapping("/api/products")
 public class ProductController {
@@ -26,7 +26,7 @@ public class ProductController {
     @Autowired
     private ProductService productService;
 
-    @ApiOperation("创建商品（含多 SKU，ADMIN/MERCHANT）")
+    @Operation(summary = "创建商品（含多 SKU，ADMIN/MERCHANT）")
     @RequireRole({"ADMIN", "MERCHANT"})
     @PostMapping
     public Result<Product> createProduct(@Valid @RequestBody Product product) {
@@ -35,7 +35,7 @@ public class ProductController {
         return Result.success(product);
     }
 
-    @ApiOperation("商品详情查询（公开，核心接口）")
+    @Operation(summary = "商品详情查询（公开，核心接口）")
     @LogOperation("用户浏览商品详情(埋点)")
     @TrackBehavior(type = 1, productIdSpEL = "#id")
     @GetMapping("/{id}")
@@ -43,7 +43,7 @@ public class ProductController {
         return Result.success(productService.getProductById(id));
     }
 
-    @ApiOperation("商品修改（ADMIN/MERCHANT 本店）")
+    @Operation(summary = "商品修改（ADMIN/MERCHANT 本店）")
     @RequireRole({"ADMIN", "MERCHANT"})
     @LogOperation("修改/审核商品")
     @PutMapping("/{id}")
@@ -53,7 +53,7 @@ public class ProductController {
         return Result.success(product);
     }
 
-    @ApiOperation("商品删除（逻辑删除，ADMIN/MERCHANT 本店）")
+    @Operation(summary = "商品删除（逻辑删除，ADMIN/MERCHANT 本店）")
     @RequireRole({"ADMIN", "MERCHANT"})
     @DeleteMapping("/{id}")
     public Result<Void> deleteProduct(@PathVariable Long id) {
@@ -61,7 +61,7 @@ public class ProductController {
         return Result.success();
     }
 
-    @ApiOperation("商品列表分页搜索（公开，前台/后台通用）")
+    @Operation(summary = "商品列表分页搜索（公开，前台/后台通用）")
     @GetMapping
     public Result<PageResult<Product>> page(ProductPageQuery query) {
         return Result.success(productService.pageProducts(query));

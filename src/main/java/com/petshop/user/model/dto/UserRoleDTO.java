@@ -2,7 +2,7 @@ package com.petshop.user.model.dto;
 
 import lombok.Data;
 
-import javax.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotBlank;
 
 /** 变更用户角色请求 */
 @Data

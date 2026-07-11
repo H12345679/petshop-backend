@@ -1,8 +1,7 @@
 package com.petshop.shop.service;
 
 import com.petshop.common.PageQuery;
-import io.swagger.annotations.ApiModel;
-import io.swagger.annotations.ApiModelProperty;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -14,15 +13,15 @@ import lombok.EqualsAndHashCode;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@ApiModel("商店分页查询参数")
+@Schema(description = "商店分页查询参数")
 public class ShopPageQuery extends PageQuery {
 
-    @ApiModelProperty(value = "商店名称（模糊搜索）", example = "极客宠物")
+    @Schema(description = "商店名称（模糊搜索）", example = "极客宠物")
     private String name;
 
-    @ApiModelProperty(value = "营业状态 1营业 0停业", example = "1")
+    @Schema(description = "营业状态 1营业 0停业", example = "1")
     private Integer status;
 
-    @ApiModelProperty(value = "店主ID", example = "1")
+    @Schema(description = "店主ID", example = "1")
     private Long ownerId;
 }

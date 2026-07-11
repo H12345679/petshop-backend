@@ -11,8 +11,8 @@ import com.petshop.order.mapper.OrderStatusLogMapper;
 import com.petshop.user.entity.User;
 import com.petshop.user.mapper.UserMapper;
 import com.petshop.security.RequireRole;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -22,7 +22,7 @@ import java.util.*;
  * 系统日志与订单状态流转日志控制器
  * 负责处理后台管理员对系统操作日志、订单状态变更记录的查询请求
  */
-@Api(tags = "10-系统与订单日志管理")
+@Tag(name = "10-系统与订单日志管理")
 @RestController
 @RequestMapping("/api/sys/log")
 public class SysLogController {
@@ -43,7 +43,7 @@ public class SysLogController {
      * @param operation 操作内容（模糊搜索）
      * @return 包含系统日志的分页结果
      */
-    @ApiOperation("分页查询系统操作日志")
+    @Operation(summary = "分页查询系统操作日志")
     @GetMapping("/page")
     public Result<Page<SysLog>> getPage(@RequestParam(defaultValue = "1") Integer current,
                           @RequestParam(defaultValue = "10") Integer size,
@@ -77,7 +77,7 @@ public class SysLogController {
      * @param remark 备注内容（模糊匹配）
      * @return 包含订单状态流转日志（附带操作人姓名）的分页结果
      */
-    @ApiOperation("分页查询订单状态流转日志")
+    @Operation(summary = "分页查询订单状态流转日志")
     @GetMapping("/order-status/page")
     @RequireRole({"ADMIN", "MERCHANT"})
     public Result<Map<String, Object>> getOrderStatusLogs(

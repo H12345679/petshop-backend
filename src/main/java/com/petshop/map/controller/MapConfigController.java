@@ -1,8 +1,8 @@
 package com.petshop.map.controller;
 
 import com.petshop.common.Result;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -14,7 +14,7 @@ import java.util.Map;
 /**
  * 地图配置控制器，用于动态安全下发高德地图前端 Key 与安全密钥
  */
-@Api(tags = "D-地图LBS")
+@Tag(name = "D-地图LBS")
 @RestController
 @RequestMapping("/api/map")
 public class MapConfigController {
@@ -29,7 +29,7 @@ public class MapConfigController {
         this.amapSecurityJsCode = amapSecurityJsCode;
     }
 
-    @ApiOperation("获取高德地图前端配置")
+    @Operation(summary = "获取高德地图前端配置")
     @GetMapping("/config")
     public Result<Map<String, String>> getConfig() {
         Map<String, String> config = new HashMap<>(2);

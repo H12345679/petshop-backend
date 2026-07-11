@@ -1,8 +1,7 @@
 package com.petshop.product.service;
 
 import com.petshop.common.PageQuery;
-import io.swagger.annotations.ApiModel;
-import io.swagger.annotations.ApiModelProperty;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -13,33 +12,33 @@ import lombok.EqualsAndHashCode;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@ApiModel("商品列表分页搜索参数")
+@Schema(description = "商品列表分页搜索参数")
 public class ProductPageQuery extends PageQuery {
 
-    @ApiModelProperty(value = "按单个门店过滤", example = "180479302948019283")
+    @Schema(description = "按单个门店过滤", example = "180479302948019283")
     private Long shopId;
 
-    @ApiModelProperty(value = "按多个门店过滤（逗号分隔）", example = "1,2,3")
+    @Schema(description = "按多个门店过滤（逗号分隔）", example = "1,2,3")
     private String shopIds;
 
-    @ApiModelProperty(value = "按分类过滤")
+    @Schema(description = "按分类过滤")
     private Long categoryId;
 
-    @ApiModelProperty(value = "商品名（模糊搜索）")
+    @Schema(description = "商品名（模糊搜索）")
     private String name;
 
-    @ApiModelProperty(value = "类型 1宠物 2周边")
+    @Schema(description = "类型 1宠物 2周边")
     private Integer type;
 
-    @ApiModelProperty(value = "上下架 1上架 0下架")
+    @Schema(description = "上下架 1上架 0下架")
     private Integer status;
 
-    @ApiModelProperty(value = "最低价")
+    @Schema(description = "最低价")
     private java.math.BigDecimal minPrice;
 
-    @ApiModelProperty(value = "最高价")
+    @Schema(description = "最高价")
     private java.math.BigDecimal maxPrice;
 
-    @ApiModelProperty(value = "排序方式: sales_desc, price_asc, price_desc, new (默认)")
+    @Schema(description = "排序方式: sales_desc, price_asc, price_desc, new (默认)")
     private String sort;
 }

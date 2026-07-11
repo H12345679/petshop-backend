@@ -11,9 +11,9 @@ import com.petshop.file.QiniuService;
 import com.petshop.log.annotation.LogOperation;
 import com.petshop.security.RequireRole;
 import com.petshop.security.UserContext;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
-import io.swagger.annotations.ApiParam;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -36,7 +36,7 @@ import java.util.Map;
  * </ul>
  * </p>
  */
-@Api(tags = "06-E模块-视频管理")
+@Tag(name = "06-E模块-视频管理")
 @RestController
 @RequestMapping("/api/videos")
 public class VideoController {
@@ -50,11 +50,11 @@ public class VideoController {
 
     // ==================== E2 - 视频文件上传 ====================
 
-    @ApiOperation("视频文件上传(返回可访问URL), 仅 ADMIN/MERCHANT")
+    @Operation(summary = "视频文件上传(返回可访问URL), 仅 ADMIN/MERCHANT")
     @RequireRole({"ADMIN", "MERCHANT"})
     @PostMapping("/upload")
     public Result<Map<String, String>> uploadVideo(
-            @ApiParam(value = "视频文件(mp4/mov 等)", required = true)
+            @Parameter(description = "视频文件(mp4/mov 等)")
             @RequestParam("file") MultipartFile file) {
         // 直传七牛云(空文件校验、UUID 命名都在 QiniuService 里), 返回可访问 URL
         String url = qiniuService.upload(file, "videos");
@@ -65,7 +65,7 @@ public class VideoController {
 
     // ==================== E2 - 视频元数据创建 ====================
 
-    @ApiOperation("保存视频元数据(创建视频), 仅 ADMIN/MERCHANT")
+    @Operation(summary = "保存视频元数据(创建视频), 仅 ADMIN/MERCHANT")
     @RequireRole({"ADMIN", "MERCHANT"})
     @PostMapping
     public Result<Video> createVideo(@Validated @RequestBody VideoCreateDTO dto) {
@@ -76,7 +76,7 @@ public class VideoController {
 
     // ==================== E2 - 视频分页列表(公开) ====================
 
-    @ApiOperation("视频分页列表(公开, 支持标题/商品/店铺过滤)")
+    @Operation(summary = "视频分页列表(公开, 支持标题/商品/店铺过滤)")
     @GetMapping
     public Result<PageResult<Video>> pageVideos(VideoPageQuery query) {
         return Result.success(videoService.pageVideos(query));
@@ -84,7 +84,7 @@ public class VideoController {
 
     // ==================== E2 - 视频分页列表(后台管理) ====================
 
-    @ApiOperation("视频分页列表(后台管理, 支持所有状态过滤)")
+    @Operation(summary = "视频分页列表(后台管理, 支持所有状态过滤)")
     @RequireRole({"ADMIN", "MERCHANT"})
     @GetMapping("/manage")
     public Result<PageResult<Video>> manageVideos(VideoPageQuery query) {
@@ -93,21 +93,21 @@ public class VideoController {
 
     // ==================== E2 - 视频详情(公开, 播放量+1) ====================
 
-    @ApiOperation("视频详情(播放量自动+1, 含关联商品名称/图片/价格, 用于播放页'可跳商品'功能)")
+    @Operation(summary = "视频详情(播放量自动+1, 含关联商品名称/图片/价格, 用于播放页'可跳商品'功能)")
     @GetMapping("/{id}")
     public Result<VideoDetailVO> getVideo(
-            @ApiParam(value = "视频ID", required = true) @PathVariable Long id) {
+            @Parameter(description = "视频ID") @PathVariable Long id) {
         return Result.success(videoService.getVideoAndIncrViews(id));
     }
 
     // ==================== E7 - 后台编辑视频 ====================
 
-    @ApiOperation("编辑视频元数据, 仅 ADMIN/MERCHANT(MERCHANT 只能改本店视频)")
+    @Operation(summary = "编辑视频元数据, 仅 ADMIN/MERCHANT(MERCHANT 只能改本店视频)")
     @RequireRole({"ADMIN", "MERCHANT"})
     @LogOperation("编辑/审核视频")
     @PutMapping("/{id}")
     public Result<Void> updateVideo(
-            @ApiParam(value = "视频ID", required = true) @PathVariable Long id,
+            @Parameter(description = "视频ID") @PathVariable Long id,
             @RequestBody VideoCreateDTO dto) {
         UserContext.LoginUser loginUser = UserContext.get();
         videoService.updateVideo(id, dto, loginUser.getUserId(), loginUser.getRole());
@@ -116,11 +116,11 @@ public class VideoController {
 
     // ==================== E7 - 后台删除视频 ====================
 
-    @ApiOperation("删除视频(逻辑删除), 仅 ADMIN/MERCHANT(MERCHANT 只能删本店视频)")
+    @Operation(summary = "删除视频(逻辑删除), 仅 ADMIN/MERCHANT(MERCHANT 只能删本店视频)")
     @RequireRole({"ADMIN", "MERCHANT"})
     @DeleteMapping("/{id}")
     public Result<Void> deleteVideo(
-            @ApiParam(value = "视频ID", required = true) @PathVariable Long id) {
+            @Parameter(description = "视频ID") @PathVariable Long id) {
         UserContext.LoginUser loginUser = UserContext.get();
         videoService.deleteVideo(id, loginUser.getUserId(), loginUser.getRole());
         return Result.success();

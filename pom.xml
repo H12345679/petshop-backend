@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>2.7.18</version>
+        <version>3.4.4</version>
         <relativePath/>
     </parent>
 
@@ -55,7 +55,7 @@
             <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
 
-        <!-- Elasticsearch 搜索引擎（版本由 SB2.7 管理，对应 ES 7.17）-->
+        <!-- Elasticsearch 搜索引擎（Spring Boot 3.4 对应 ES 8.x） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-elasticsearch</artifactId>
@@ -69,25 +69,24 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- MyBatis-Plus -->
+        <!-- MyBatis-Plus (Spring Boot 3 专用 starter) -->
         <dependency>
             <groupId>com.baomidou</groupId>
-            <artifactId>mybatis-plus-boot-starter</artifactId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
             <version>${mybatis-plus.version}</version>
         </dependency>
 
-        <!-- Druid 连接池 -->
+        <!-- Druid 连接池 (Spring Boot 3 专用 starter) -->
         <dependency>
             <groupId>com.alibaba</groupId>
-            <artifactId>druid-spring-boot-starter</artifactId>
+            <artifactId>druid-spring-boot-3-starter</artifactId>
             <version>${druid.version}</version>
         </dependency>
 
-        <!-- MySQL 驱动 -->
+        <!-- MySQL 驱动 (Spring Boot 3 统一使用 mysql-connector-j) -->
         <dependency>
-            <groupId>mysql</groupId>
-            <artifactId>mysql-connector-java</artifactId>
-            <version>8.0.33</version>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
             <scope>runtime</scope>
         </dependency>
 
@@ -110,10 +109,10 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Knife4j（Swagger 增强 UI，访问 /doc.html）-->
+        <!-- Knife4j（OpenAPI3 + Jakarta，访问 /doc.html）-->
         <dependency>
             <groupId>com.github.xiaoymin</groupId>
-            <artifactId>knife4j-openapi2-spring-boot-starter</artifactId>
+            <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
             <version>${knife4j.version}</version>
         </dependency>
 

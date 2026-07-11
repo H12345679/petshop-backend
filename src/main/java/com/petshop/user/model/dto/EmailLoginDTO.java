@@ -2,8 +2,8 @@ package com.petshop.user.model.dto;
 
 import lombok.Data;
 
-import javax.validation.constraints.Email;
-import javax.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
 
 /** 邮箱验证码登录请求 */
 @Data

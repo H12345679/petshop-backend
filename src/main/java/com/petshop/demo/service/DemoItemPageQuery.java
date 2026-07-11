@@ -1,8 +1,7 @@
 package com.petshop.demo.service;
 
 import com.petshop.common.PageQuery;
-import io.swagger.annotations.ApiModel;
-import io.swagger.annotations.ApiModelProperty;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -14,9 +13,9 @@ import lombok.EqualsAndHashCode;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@ApiModel("DemoItem 分页查询参数")
+@Schema(description = "DemoItem 分页查询参数")
 public class DemoItemPageQuery extends PageQuery {
 
-    @ApiModelProperty(value = "名称（模糊搜索）", example = "测试")
+    @Schema(description = "名称（模糊搜索）", example = "测试")
     private String name;
 }

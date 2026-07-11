@@ -6,8 +6,8 @@ import com.petshop.order.service.RefundService;
 import com.petshop.log.annotation.LogOperation;
 import com.petshop.security.RequireLogin;
 import com.petshop.security.RequireRole;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,7 +18,7 @@ import java.util.Map;
 /**
  * 退单接口。
  */
-@Api(tags = "07-退单")
+@Tag(name = "07-退单")
 @RestController
 @RequestMapping("/api/refunds")
 public class RefundController {
@@ -26,7 +26,7 @@ public class RefundController {
     @Autowired
     private RefundService refundService;
 
-    @ApiOperation("用户申请退单(2/3/4→-2,支持仅退款/退货退款、是否收到货)")
+    @Operation(summary = "用户申请退单(2/3/4→-2,支持仅退款/退货退款、是否收到货)")
     @RequireLogin
     @LogOperation("申请退单")
     @PostMapping
@@ -50,7 +50,7 @@ public class RefundController {
                 refundType, received, description, images));
     }
 
-    @ApiOperation("后台审核退单(ADMIN·MERCHANT: 仅退款通过→打款-3; 退货退款通过→待用户退货; 驳回→恢复原状态)")
+    @Operation(summary = "后台审核退单(ADMIN·MERCHANT: 仅退款通过→打款-3; 退货退款通过→待用户退货; 驳回→恢复原状态)")
     @RequireRole({"ADMIN", "MERCHANT"})
     @LogOperation("审核退单")
     @PutMapping("/{id}/audit")
@@ -61,7 +61,7 @@ public class RefundController {
         return Result.success();
     }
 
-    @ApiOperation("用户填写退货快递单号(退单状态3→4,等待商家确认收货)")
+    @Operation(summary = "用户填写退货快递单号(退单状态3→4,等待商家确认收货)")
     @RequireLogin
     @LogOperation("填写退货快递单号")
     @PutMapping("/{id}/return-shipping")
@@ -72,7 +72,7 @@ public class RefundController {
         return Result.success();
     }
 
-    @ApiOperation("商家确认收到退货并打款(ADMIN·MERCHANT,退单状态4→1,订单-2→-3)")
+    @Operation(summary = "商家确认收到退货并打款(ADMIN·MERCHANT,退单状态4→1,订单-2→-3)")
     @RequireRole({"ADMIN", "MERCHANT"})
     @LogOperation("确认收货退款")
     @PutMapping("/{id}/confirm-return")
@@ -82,7 +82,7 @@ public class RefundController {
         return Result.success();
     }
 
-    @ApiOperation("管理员直接退单(ADMIN·MERCHANT,3→-4)")
+    @Operation(summary = "管理员直接退单(ADMIN·MERCHANT,3→-4)")
     @RequireRole("ADMIN")
     @LogOperation("管理员直接退单")
     @PostMapping("/direct")
@@ -95,7 +95,7 @@ public class RefundController {
         return Result.success();
     }
 
-    @ApiOperation("后台退单列表分页(ADMIN·MERCHANT)")
+    @Operation(summary = "后台退单列表分页(ADMIN·MERCHANT)")
     @RequireRole({"ADMIN", "MERCHANT"})
     @GetMapping("/manage")
     public Result<PageResult<Map<String, Object>>> manage(

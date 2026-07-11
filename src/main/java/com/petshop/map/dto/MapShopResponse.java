@@ -1,36 +1,35 @@
 package com.petshop.map.dto;
 
-import io.swagger.annotations.ApiModel;
-import io.swagger.annotations.ApiModelProperty;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.math.BigDecimal;
 
 @Data
-@ApiModel("地图商店点位")
+@Schema(description = "地图商店点位")
 public class MapShopResponse {
 
-    @ApiModelProperty("商店ID")
+    @Schema(description = "商店ID")
     private Long id;
 
-    @ApiModelProperty("商店名称")
+    @Schema(description = "商店名称")
     private String name;
 
-    @ApiModelProperty("联系电话")
+    @Schema(description = "联系电话")
     private String phone;
 
-    @ApiModelProperty("商店Logo")
+    @Schema(description = "商店Logo")
     private String logo;
 
-    @ApiModelProperty("经度")
+    @Schema(description = "经度")
     private BigDecimal longitude;
 
-    @ApiModelProperty("纬度")
+    @Schema(description = "纬度")
     private BigDecimal latitude;
 
-    @ApiModelProperty("完整地址")
+    @Schema(description = "完整地址")
     private String address;
 
-    @ApiModelProperty("距离，单位公里")
+    @Schema(description = "距离，单位公里")
     private BigDecimal distanceKm;
 }

@@ -10,8 +10,8 @@ import com.petshop.security.JwtUtil;
 import com.petshop.security.RequireLogin;
 import com.petshop.security.RequireRole;
 import com.petshop.security.UserContext;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -35,7 +35,7 @@ import java.util.Map;
  *   <li>CRUD 演示：DemoItem 增删改查 + 分页（展示完整三层架构用法，供 B/C/D/E 参考）</li>
  * </ul>
  */
-@Api(tags = "00-框架自检Demo")
+@Tag(name = "00-框架自检Demo")
 @RestController
 @RequestMapping("/api/demo")
 public class DemoController {
@@ -48,13 +48,13 @@ public class DemoController {
 
     // ==================== 鉴权演示 ====================
 
-    @ApiOperation("公开接口：健康检查")
+    @Operation(summary = "公开接口：健康检查")
     @GetMapping("/ping")
     public Result<String> ping() {
         return Result.success("pong");
     }
 
-    @ApiOperation("演示登录：签发测试 token（正式登录由 B 实现）")
+    @Operation(summary = "演示登录：签发测试 token（正式登录由 B 实现）")
     @PostMapping("/login")
     public Result<Map<String, Object>> login(@RequestParam(defaultValue = "tester") String username,
                                              @RequestParam(defaultValue = "USER") String role) {
@@ -66,14 +66,14 @@ public class DemoController {
         return Result.success("登录成功", data);
     }
 
-    @ApiOperation("需要登录：返回当前登录用户")
+    @Operation(summary = "需要登录：返回当前登录用户")
     @RequireLogin
     @GetMapping("/me")
     public Result<UserContext.LoginUser> me() {
         return Result.success(UserContext.get());
     }
 
-    @ApiOperation("需要管理员：仅 ADMIN 角色可访问")
+    @Operation(summary = "需要管理员：仅 ADMIN 角色可访问")
     @RequireRole({"ADMIN"})
     @GetMapping("/admin")
     public Result<String> adminOnly() {
@@ -82,14 +82,14 @@ public class DemoController {
 
     // ==================== CRUD 演示（DemoItem）====================
 
-    @ApiOperation("新增 DemoItem")
+    @Operation(summary = "新增 DemoItem")
     @PostMapping("/items")
     public Result<DemoItem> create(@RequestBody DemoItem item) {
         demoItemService.save(item);
         return Result.success(item);
     }
 
-    @ApiOperation("根据 ID 查询 DemoItem")
+    @Operation(summary = "根据 ID 查询 DemoItem")
     @GetMapping("/items/{id}")
     public Result<DemoItem> getById(@PathVariable Long id) {
         DemoItem item = demoItemService.getById(id);
@@ -99,7 +99,7 @@ public class DemoController {
         return Result.success(item);
     }
 
-    @ApiOperation("修改 DemoItem")
+    @Operation(summary = "修改 DemoItem")
     @PutMapping("/items/{id}")
     public Result<Void> update(@PathVariable Long id, @RequestBody DemoItem item) {
         item.setId(id);
@@ -110,7 +110,7 @@ public class DemoController {
         return Result.success();
     }
 
-    @ApiOperation("删除 DemoItem（逻辑删除）")
+    @Operation(summary = "删除 DemoItem（逻辑删除）")
     @DeleteMapping("/items/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         boolean ok = demoItemService.removeById(id);
@@ -120,7 +120,7 @@ public class DemoController {
         return Result.success();
     }
 
-    @ApiOperation("分页查询 DemoItem（支持名称模糊搜索）")
+    @Operation(summary = "分页查询 DemoItem（支持名称模糊搜索）")
     @GetMapping("/items")
     public Result<PageResult<DemoItem>> page(DemoItemPageQuery query) {
         return Result.success(demoItemService.page(query));

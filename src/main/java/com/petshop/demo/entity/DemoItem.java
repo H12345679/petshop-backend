@@ -2,8 +2,7 @@ package com.petshop.demo.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.petshop.common.BaseEntity;
-import io.swagger.annotations.ApiModel;
-import io.swagger.annotations.ApiModelProperty;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -15,9 +14,9 @@ import lombok.EqualsAndHashCode;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @TableName("demo_item")
-@ApiModel("演示实体")
+@Schema(description = "演示实体")
 public class DemoItem extends BaseEntity {
 
-    @ApiModelProperty("名称")
+    @Schema(description = "名称")
     private String name;
 }

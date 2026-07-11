@@ -6,8 +6,8 @@ import com.petshop.security.UserContext;
 import com.petshop.user.model.dto.AddressDTO;
 import com.petshop.user.model.vo.AddressVO;
 import com.petshop.user.service.AddressService;
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,13 +18,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import javax.validation.Valid;
+import jakarta.validation.Valid;
 import java.util.List;
 
 /**
  * 收货地址接口（需登录）。
  */
-@Api(tags = "03-收货地址")
+@Tag(name = "03-收货地址")
 @RestController
 @RequestMapping("/api/addresses")
 public class AddressController {
@@ -32,7 +32,7 @@ public class AddressController {
     @Autowired
     private AddressService addressService;
 
-    @ApiOperation("收货地址列表")
+    @Operation(summary = "收货地址列表")
     @RequireLogin
     @GetMapping
     public Result<List<AddressVO>> list() {
@@ -41,7 +41,7 @@ public class AddressController {
         return Result.success(list);
     }
 
-    @ApiOperation("新增收货地址")
+    @Operation(summary = "新增收货地址")
     @RequireLogin
     @PostMapping
     public Result<AddressVO> create(@Valid @RequestBody AddressDTO dto) {
@@ -50,7 +50,7 @@ public class AddressController {
         return Result.success(vo);
     }
 
-    @ApiOperation("修改收货地址")
+    @Operation(summary = "修改收货地址")
     @RequireLogin
     @PutMapping("/{id}")
     public Result<Void> update(@PathVariable Long id, @RequestBody AddressDTO dto) {
@@ -59,7 +59,7 @@ public class AddressController {
         return Result.success();
     }
 
-    @ApiOperation("删除收货地址")
+    @Operation(summary = "删除收货地址")
     @RequireLogin
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
@@ -68,7 +68,7 @@ public class AddressController {
         return Result.success();
     }
 
-    @ApiOperation("设为默认地址")
+    @Operation(summary = "设为默认地址")
     @RequireLogin
     @PutMapping("/{id}/default")
     public Result<Void> setDefault(@PathVariable Long id) {
