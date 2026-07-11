@@ -66,4 +66,9 @@ public class ProductController {
     public Result<PageResult<Product>> page(ProductPageQuery query) {
         return Result.success(productService.pageProducts(query));
     }
+    @Operation(summary = "全量同步商品到ES (内部用)")
+    @PostMapping("/es/sync")
+    public Result<Long> syncToES() {
+        return Result.success(productService.syncAllToES());
+    }
 }

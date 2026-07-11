@@ -28,6 +28,13 @@ public interface ProductService extends IService<Product> {
     /** [内部接口] 供订单模块使用：扣减库存并返回真实售价（带悲观/乐观锁思想，防超卖和篡改） */
     java.math.BigDecimal checkPriceAndDeductStock(Long productId, Long skuId, Integer quantity);
 
-    /** [内部接口] 供推荐/统计模块使用：拉取所有上架状态的商品（轻量级） */
+    /**
+     * 获取所有在售商品（用于内部推荐模块离线聚合等）
+     */
     List<Product> getAllActiveProductsForRecommend();
+
+    /**
+     * 将全量商品数据同步到 Elasticsearch，并返回同步的数量
+     */
+    long syncAllToES();
 }

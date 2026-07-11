@@ -24,6 +24,16 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import com.petshop.product.entity.ProductES;
+import com.petshop.product.repository.ProductESRepository;
+import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
+import org.springframework.data.elasticsearch.core.mapping.IndexCoordinates;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 商品 Service 实现。
@@ -49,6 +59,109 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     private com.petshop.shop.mapper.ShopMapper shopMapper;
     @Autowired
     private com.petshop.recommend.service.RecommendRankService recommendRankService;
+    @Autowired
+    private ProductESRepository productESRepository;
+    @Autowired
+    private ElasticsearchOperations elasticsearchOperations;
+
+    private ProductES mapToES(Product product) {
+        if (product == null) return null;
+        ProductES es = new ProductES();
+        es.setId(product.getId());
+        es.setShopId(product.getShopId());
+        es.setCategoryId(product.getCategoryId());
+        es.setName(product.getName());
+        es.setDescription(product.getDescription());
+        es.setType(product.getType());
+        es.setPrice(product.getPrice());
+        es.setStock(product.getStock());
+        es.setSales(product.getSales());
+        es.setStatus(product.getStatus());
+        if (product.getCreateTime() != null) {
+            es.setCreateTime(java.util.Date.from(product.getCreateTime().atZone(java.time.ZoneId.systemDefault()).toInstant()));
+        }
+        return es;
+    }
+
+    @Override
+    public long syncAllToES() {
+        // 先测试能否连通 ES（抛异常说明不可用）
+        elasticsearchOperations.indexOps(IndexCoordinates.of("product")).exists();
+        
+        long totalSynced = 0;
+        int current = 1;
+        int size = 500; // 分批获取
+        
+        while (true) {
+            Page<Product> page = this.page(new Page<>(current, size));
+            List<Product> records = page.getRecords();
+            if (records == null || records.isEmpty()) {
+                break;
+            }
+            
+            List<ProductES> esList = new ArrayList<>();
+            for (Product p : records) {
+                esList.add(mapToES(p));
+            }
+            if (!esList.isEmpty()) {
+                productESRepository.saveAll(esList);
+                totalSynced += esList.size();
+            }
+            
+            if (current >= page.getPages()) {
+                break;
+            }
+            current++;
+        }
+        return totalSynced;
+    }
+
+    /** 事务提交成功后同步更新 ES (防分布式幽灵数据) */
+    private void syncToEsAfterCommit(Long productId) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    executeEsSync(productId);
+                }
+            });
+        } else {
+            executeEsSync(productId);
+        }
+    }
+
+    private void executeEsSync(Long productId) {
+        try {
+            Product dbProduct = this.getById(productId);
+            if (dbProduct != null) {
+                productESRepository.save(mapToES(dbProduct));
+            }
+        } catch (Exception e) {
+            log.error("同步修改商品(ID:" + productId + ")到 ES 失败", e);
+        }
+    }
+
+    /** 事务提交成功后从 ES 移除 */
+    private void deleteFromEsAfterCommit(Long productId) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    executeEsDelete(productId);
+                }
+            });
+        } else {
+            executeEsDelete(productId);
+        }
+    }
+
+    private void executeEsDelete(Long productId) {
+        try {
+            productESRepository.deleteById(productId);
+        } catch (Exception e) {
+            log.error("从 ES 删除商品(ID:" + productId + ")失败", e);
+        }
+    }
 
     /**
      * 【内部工具】：动态计算商品的会员折后价。
@@ -164,7 +277,11 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
                     new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Product>()
                             .eq(Product::getId, product.getId())
                             .set(Product::getStock, totalStock));
+            product.setStock(totalStock); // 同步回对象以便发往 ES
         }
+        
+        // 6) 同步到 ES
+        syncToEsAfterCommit(product.getId());
     }
 
     @Override
@@ -206,26 +323,45 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
             throw new BusinessException(ResultCode.NOT_FOUND);
         }
 
-        // 4) 【暴力全量替换 SKU 模式】：为了防止前台传来的 SKU 列表错乱（增删改混杂），
-        // 最简单可靠的办法就是：先把这件商品旧的 SKU 全删光！
-        productSkuMapper.delete(new QueryWrapper<ProductSku>().eq("product_id", product.getId()));
+        // 4) 【平滑替换 SKU 模式】：比较新老 SKU 列表，增删改
+        List<ProductSku> oldSkus = productSkuMapper.selectList(new QueryWrapper<ProductSku>().eq("product_id", product.getId()));
+        List<ProductSku> newSkus = product.getSkus();
+        if (newSkus == null) newSkus = new ArrayList<>();
         
-        // 5) 然后再把前端传过来的最新 SKU 列表作为全新的数据，一条条重新插进去
-        List<ProductSku> skus = product.getSkus();
-        if (skus != null && !skus.isEmpty()) {
-            int totalStock = 0;
-            for (ProductSku sku : skus) {
-                sku.setId(null);
-                sku.setProductId(product.getId());
-                productSkuMapper.insert(sku);
-                totalStock += (sku.getStock() != null ? sku.getStock() : 0);
+        Map<Long, ProductSku> oldSkuMap = oldSkus.stream().collect(Collectors.toMap(ProductSku::getId, s -> s));
+        int totalStock = 0;
+        
+        for (ProductSku newSku : newSkus) {
+            if (newSku.getId() != null && oldSkuMap.containsKey(newSku.getId())) {
+                // 更新现有 SKU
+                newSku.setProductId(product.getId());
+                productSkuMapper.updateById(newSku);
+                oldSkuMap.remove(newSku.getId()); // 从老Map中移除，剩下的就是要删除的
+            } else {
+                // 插入新 SKU
+                newSku.setId(null);
+                newSku.setProductId(product.getId());
+                productSkuMapper.insert(newSku);
             }
-            // 有 SKU 时，主表 stock = 所有 SKU 库存之和
+            totalStock += (newSku.getStock() != null ? newSku.getStock() : 0);
+        }
+        
+        // 删除已经不存在的旧 SKU
+        for (Long deleteSkuId : oldSkuMap.keySet()) {
+            productSkuMapper.deleteById(deleteSkuId);
+        }
+
+        // 有 SKU 时，主表 stock = 所有 SKU 库存之和
+        if (!newSkus.isEmpty()) {
             this.baseMapper.update(null,
                     new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Product>()
                             .eq(Product::getId, product.getId())
                             .set(Product::getStock, totalStock));
+            product.setStock(totalStock);
         }
+        
+        // 5) 同步更新到 ES
+        syncToEsAfterCommit(product.getId());
     }
 
     @Override
@@ -236,73 +372,120 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         if (!ok) {
             throw new BusinessException(ResultCode.NOT_FOUND);
         }
+        deleteFromEsAfterCommit(id);
     }
 
     @Override
     public PageResult<Product> pageProducts(ProductPageQuery query) {
-        LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
+        org.springframework.data.elasticsearch.core.query.Criteria criteria = new org.springframework.data.elasticsearch.core.query.Criteria();
 
-        // MERCHANT 只看自己名下店铺的商品；ADMIN/null 不过滤
-        if (applyShopFilter(w, query)) {
-            return new PageResult<>(); // 越权或无店铺 → 返回空页
-        }
-
-        // 多门店 IN 过滤（商家后台用，逗号分隔的 shopIds）
-        applyMultiShopFilter(w, query);
-
-        // 条件式：值为 null/空 时该条件不生效
-        w.eq(query.getCategoryId() != null, Product::getCategoryId, query.getCategoryId());
-        w.like(StringUtils.hasText(query.getName()), Product::getName, query.getName());
-        w.eq(query.getType() != null, Product::getType, query.getType());
-        w.eq(query.getStatus() != null, Product::getStatus, query.getStatus());
-        w.ge(query.getMinPrice() != null, Product::getPrice, query.getMinPrice());
-        w.le(query.getMaxPrice() != null, Product::getPrice, query.getMaxPrice());
-
-        applySortOrder(w, query);
-
-        Page<Product> pageInfo = this.page(query.toPage(), w);
-        if (pageInfo.getRecords() != null) {
-            applyDiscountAndShopName(pageInfo.getRecords());
-        }
-        return PageResult.of(pageInfo);
-    }
-
-    /**
-     * 应用店铺归属过滤。
-     * @return true 表示应直接返回空页（越权或商家无店铺）
-     */
-    private boolean applyShopFilter(LambdaQueryWrapper<Product> w, ProductPageQuery query) {
+        // 1. 权限与店铺过滤 (替代原 applyShopFilter)
         List<Long> shopIds = ownershipChecker.myShopIds();
         if (shopIds != null && !shopIds.isEmpty()) {
             if (query.getShopId() != null) {
                 if (!shopIds.contains(query.getShopId())) {
-                    return true;
+                    return new PageResult<>(); // 越权
                 }
-                w.eq(Product::getShopId, query.getShopId());
+                criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("shopId").is(query.getShopId()));
             } else {
-                w.in(Product::getShopId, shopIds);
+                criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("shopId").in(shopIds));
             }
         } else if (shopIds != null) {
-            return true;
-        } else {
-            w.eq(query.getShopId() != null, Product::getShopId, query.getShopId());
+            return new PageResult<>(); // 商家无店铺
+        } else if (query.getShopId() != null) {
+            criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("shopId").is(query.getShopId()));
         }
-        return false;
+
+        // 2. 多门店过滤
+        if (query.getShopId() == null && StringUtils.hasText(query.getShopIds())) {
+            java.util.List<Long> ids = new java.util.ArrayList<>();
+            for (String s : query.getShopIds().split(",")) {
+                try { ids.add(Long.parseLong(s.trim())); } catch (Exception ignored) {}
+            }
+            if (!ids.isEmpty()) {
+                criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("shopId").in(ids));
+            }
+        }
+
+        // 3. 常规条件过滤
+        if (query.getCategoryId() != null) criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("categoryId").is(query.getCategoryId()));
+        if (query.getType() != null) criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("type").is(query.getType()));
+        if (query.getStatus() != null) criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("status").is(query.getStatus()));
+        if (query.getMinPrice() != null) criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("price").greaterThanEqual(query.getMinPrice().doubleValue()));
+        if (query.getMaxPrice() != null) criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("price").lessThanEqual(query.getMaxPrice().doubleValue()));
+
+        // 4. IK 分词全文检索
+        if (StringUtils.hasText(query.getName())) {
+            criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("name").matches(query.getName())
+                    .or(new org.springframework.data.elasticsearch.core.query.Criteria("description").matches(query.getName())));
+        }
+
+        org.springframework.data.elasticsearch.core.query.CriteriaQuery cq = new org.springframework.data.elasticsearch.core.query.CriteriaQuery(criteria);
+
+        // 5. 排序处理
+        String sort = query.getSort();
+        if ("sales_desc".equals(sort)) {
+            cq.addSort(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "sales"));
+        } else if ("price_asc".equals(sort)) {
+            cq.addSort(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.ASC, "price"));
+        } else if ("price_desc".equals(sort)) {
+            cq.addSort(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "price"));
+        } else if ("new".equals(sort)) {
+            cq.addSort(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createTime"));
+        } else if ("recommend".equals(sort)) {
+            // 推荐排序：ES 层面先按销量兜底排序，等拿回数据后再进行内存重排
+            cq.addSort(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "sales"));
+        } else {
+            cq.addSort(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createTime"));
+        }
+
+        // 6. 分页请求 (ES 的 page 是从 0 开始的)
+        cq.setPageable(org.springframework.data.domain.PageRequest.of((int)(query.getCurrent() - 1), (int)query.getSize()));
+
+        // 7. 执行 ES 查询
+        org.springframework.data.elasticsearch.core.SearchHits<ProductES> hits = elasticsearchOperations.search(cq, ProductES.class);
+        
+        List<Product> resultList = new java.util.ArrayList<>();
+        if (hits.getTotalHits() > 0) {
+            // 提取出当前页的商品 ID 列表
+            List<Long> productIds = hits.getSearchHits().stream()
+                    .map(h -> h.getContent().getId())
+                    .collect(java.util.stream.Collectors.toList());
+            
+            // 去 MySQL 查询出真实的商品数据（保持 ES 返回的排序）
+            List<Product> dbProducts = this.listByIds(productIds);
+            java.util.Map<Long, Product> productMap = dbProducts.stream().collect(java.util.stream.Collectors.toMap(Product::getId, p -> p));
+            for (Long pid : productIds) {
+                if (productMap.containsKey(pid)) {
+                    resultList.add(productMap.get(pid));
+                }
+            }
+            // 推荐排序：人工内存重排（千人千面）
+            if ("recommend".equals(sort)) {
+                List<Long> recIds = getRecommendProductIds(query.getSize() * 2);
+                resultList.sort((a, b) -> {
+                    int idxA = recIds.indexOf(a.getId());
+                    int idxB = recIds.indexOf(b.getId());
+                    if (idxA != -1 && idxB != -1) return Integer.compare(idxA, idxB);
+                    if (idxA != -1) return -1;
+                    if (idxB != -1) return 1;
+                    return Integer.compare(b.getSales() != null ? b.getSales() : 0, a.getSales() != null ? a.getSales() : 0);
+                });
+            }
+            
+            applyDiscountAndShopName(resultList);
+        }
+
+        // 8. 构造 PageResult 统一返回格式
+        PageResult<Product> pageResult = new PageResult<>();
+        pageResult.setCurrent((long) query.getCurrent());
+        pageResult.setSize((long) query.getSize());
+        pageResult.setTotal(hits.getTotalHits());
+        pageResult.setRecords(resultList);
+        return pageResult;
     }
 
-    /** 多门店逗号分隔 shopIds 过滤 */
-    private void applyMultiShopFilter(LambdaQueryWrapper<Product> w, ProductPageQuery query) {
-        if (query.getShopId() != null || !StringUtils.hasText(query.getShopIds())) {
-            return;
-        }
-        java.util.List<Long> ids = new java.util.ArrayList<>();
-        for (String s : query.getShopIds().split(",")) {
-            try { ids.add(Long.parseLong(s.trim())); } catch (NumberFormatException ignored) { /* non-numeric shopId token skipped */ }
-        }
-        if (!ids.isEmpty()) {
-            w.in(Product::getShopId, ids);
-        }
-    }
+    // 移除旧的 applyShopFilter 和 applyMultiShopFilter (因为已被内联合并到上面)
 
     /** 应用排序规则 */
     private void applySortOrder(LambdaQueryWrapper<Product> w, ProductPageQuery query) {
@@ -574,6 +757,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
                         .eq(Product::getId, productId)
                         .setSql("stock = stock - " + quantity));
         autoDelistIfOutOfStock(productId);
+        syncToEsAfterCommit(productId); // 同步库存和下架状态到 ES
         return sku.getPrice();
     }
 
@@ -591,6 +775,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
             throw new BusinessException(ResultCode.ERROR.getCode(), "库存扣减失败，已被抢空请重试");
         }
         autoDelistIfOutOfStock(product.getId());
+        syncToEsAfterCommit(product.getId()); // 同步库存和下架状态到 ES
         return product.getPrice();
     }
 
