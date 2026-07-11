@@ -19,11 +19,20 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import com.petshop.content.entity.VideoES;
+import com.petshop.content.repository.VideoESRepository;
+import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
+import org.springframework.data.elasticsearch.core.mapping.IndexCoordinates;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import lombok.extern.slf4j.Slf4j;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * 视频模块 Service 实现（E 模块 - E2）
  */
+@Slf4j
 @Service
 public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements VideoService {
 
@@ -33,7 +42,92 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
     @Autowired
     private OwnershipChecker ownershipChecker;
 
+    @Autowired
+    private VideoESRepository videoESRepository;
+
+    @Autowired
+    private ElasticsearchOperations elasticsearchOperations;
+
+    private VideoES mapToES(Video video) {
+        if (video == null) return null;
+        VideoES es = new VideoES();
+        es.setId(video.getId());
+        es.setTitle(video.getTitle());
+        es.setCover(video.getCover());
+        es.setDescription(video.getDescription());
+        es.setProductId(video.getProductId());
+        es.setShopId(video.getShopId());
+        es.setViews(video.getViews());
+        es.setStatus(video.getStatus());
+        if (video.getCreateTime() != null) {
+            es.setCreateTime(java.util.Date.from(video.getCreateTime().atZone(java.time.ZoneId.systemDefault()).toInstant()));
+        }
+        return es;
+    }
+
+    private void syncToEsAfterCommit(Long videoId) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    try {
+                        Video dbVideo = getById(videoId);
+                        if (dbVideo != null) {
+                            videoESRepository.save(mapToES(dbVideo));
+                        }
+                    } catch (Exception e) {
+                        log.error("同步新建/修改视频(ID:" + videoId + ")到 ES 失败", e);
+                    }
+                }
+            });
+        }
+    }
+
+    private void deleteFromEsAfterCommit(Long videoId) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    try {
+                        videoESRepository.deleteById(videoId);
+                    } catch (Exception e) {
+                        log.error("从 ES 删除视频(ID:" + videoId + ")失败", e);
+                    }
+                }
+            });
+        }
+    }
+
     @Override
+    public long syncAllToES() {
+        elasticsearchOperations.indexOps(IndexCoordinates.of("video")).exists();
+        long totalSynced = 0;
+        int current = 1;
+        int size = 500;
+        while (true) {
+            Page<Video> page = this.page(new Page<>(current, size));
+            List<Video> records = page.getRecords();
+            if (records == null || records.isEmpty()) {
+                break;
+            }
+            List<VideoES> esList = new ArrayList<>();
+            for (Video v : records) {
+                esList.add(mapToES(v));
+            }
+            if (!esList.isEmpty()) {
+                videoESRepository.saveAll(esList);
+                totalSynced += esList.size();
+            }
+            if (current >= page.getPages()) {
+                break;
+            }
+            current++;
+        }
+        return totalSynced;
+    }
+
+    @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
     public Video createVideo(VideoCreateDTO dto, Long loginUserId, String role) {
         // MERCHANT 创建视频时，校验 shopId 是否属于本人名下
         ownershipChecker.assertShopOwned(dto.getShopId());
@@ -52,6 +146,9 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
             video.setStatus(2);
         }
         save(video);
+        
+        syncToEsAfterCommit(video.getId());
+        
         return video;
     }
 
@@ -61,82 +158,130 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
      * @param query 包含了各种过滤条件的查询参数对象
      * @return 包含视频列表和分页信息的结果集
      */
-    @Override
     public PageResult<Video> pageVideos(VideoPageQuery query) {
-        // 1. 将自定义的查询参数对象转换成 MyBatis-Plus 的 Page 分页对象
-        Page<Video> page = query.toPage();
-        
-        // 2. 构造查询条件包装器
-        LambdaQueryWrapper<Video> wrapper = new LambdaQueryWrapper<Video>()
-                // 核心安全控制：公开接口【绝对只能】返回状态为 1 (已上架/已审核通过) 的视频
-                .eq(Video::getStatus, 1) 
-                // 可选条件：如果前端传了标题，就进行模糊搜索 (LIKE '%标题%')
-                .like(StringUtils.hasText(query.getTitle()), Video::getTitle, query.getTitle())
-                // 可选条件：如果传了商品ID，就只查关联了该商品的视频
-                .eq(query.getProductId() != null && query.getProductId() > 0,
-                        Video::getProductId, query.getProductId())
-                // 可选条件：如果传了店铺ID，就只查该店铺发布的视频
-                .eq(query.getShopId() != null, Video::getShopId, query.getShopId())
-                // 排序规则：永远按照创建时间倒序排列（最新的视频在最上面）
-                .orderByDesc(Video::getCreateTime);
+        org.springframework.data.elasticsearch.core.query.Criteria criteria = new org.springframework.data.elasticsearch.core.query.Criteria();
 
-        // 3. 高级过滤逻辑：根据【商品分类】来过滤视频
-        // 因为视频表本身没有商品分类字段，所以需要通过商品表桥接一下
+        criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("status").is(1));
+
+        if (StringUtils.hasText(query.getTitle())) {
+            criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("title").matches(query.getTitle())
+                    .or(new org.springframework.data.elasticsearch.core.query.Criteria("description").matches(query.getTitle())));
+        }
+
+        if (query.getProductId() != null && query.getProductId() > 0) {
+            criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("productId").is(query.getProductId()));
+        }
+
+        if (query.getShopId() != null) {
+            criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("shopId").is(query.getShopId()));
+        }
+
         if (query.getProductCategoryId() != null && query.getProductCategoryId() > 0) {
-            // 第一步：去商品表里查出属于这个分类的所有商品
-            List<Product> products = productService.list(new LambdaQueryWrapper<Product>()
+            List<Product> products = productService.list(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Product>()
                     .eq(Product::getCategoryId, query.getProductCategoryId()));
-                    
             if (!products.isEmpty()) {
-                // 如果查到了商品，就把这些商品的 ID 提取出来变成一个 List
                 List<Long> productIds = products.stream().map(Product::getId).collect(java.util.stream.Collectors.toList());
-                // 第二步：让视频的 productId 必须在这个 List 里面（使用 SQL 的 IN 语法）
-                wrapper.in(Video::getProductId, productIds);
+                criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("productId").in(productIds));
             } else {
-                // 如果这个分类下没有任何商品，那么显然也不可能有相关的视频。
-                // 故意拼接一个绝对不可能成立的条件 (productId = -1L)，让数据库直接返回空数据。
-                wrapper.eq(Video::getProductId, -1L);
+                return new PageResult<>();
             }
         }
 
-        // 4. 执行底层分页查询，并将底层的 Page 对象包装成前端认识的 PageResult 对象返回
-        return PageResult.of(page(page, wrapper));
+        org.springframework.data.elasticsearch.core.query.CriteriaQuery cq = new org.springframework.data.elasticsearch.core.query.CriteriaQuery(criteria);
+        cq.addSort(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createTime"));
+        cq.setPageable(org.springframework.data.domain.PageRequest.of((int)(query.getCurrent() - 1), (int)query.getSize()));
+
+        org.springframework.data.elasticsearch.core.SearchHits<VideoES> hits = elasticsearchOperations.search(cq, VideoES.class);
+        
+        List<Video> resultList = new ArrayList<>();
+        if (hits.getTotalHits() > 0) {
+            List<Long> idList = hits.getSearchHits().stream()
+                    .map(h -> h.getContent().getId())
+                    .collect(java.util.stream.Collectors.toList());
+            List<Video> dbVideos = this.listByIds(idList);
+            java.util.Map<Long, Video> map = dbVideos.stream().collect(java.util.stream.Collectors.toMap(Video::getId, v -> v));
+            for (Long id : idList) {
+                if (map.containsKey(id)) {
+                    resultList.add(map.get(id));
+                }
+            }
+        }
+
+        PageResult<Video> pageResult = new PageResult<>();
+        pageResult.setCurrent((long) query.getCurrent());
+        pageResult.setSize((long) query.getSize());
+        pageResult.setTotal(hits.getTotalHits());
+        pageResult.setRecords(resultList);
+        return pageResult;
     }
 
     @Override
     public PageResult<Video> manageVideos(VideoPageQuery query) {
-        Page<Video> page = query.toPage();
-        LambdaQueryWrapper<Video> wrapper = new LambdaQueryWrapper<Video>()
-                .like(StringUtils.hasText(query.getTitle()), Video::getTitle, query.getTitle())
-                .eq(query.getProductId() != null && query.getProductId() > 0,
-                        Video::getProductId, query.getProductId())
-                .eq(query.getShopId() != null, Video::getShopId, query.getShopId())
-                .eq(query.getStatus() != null, Video::getStatus, query.getStatus())
-                .orderByDesc(Video::getCreateTime);
+        org.springframework.data.elasticsearch.core.query.Criteria criteria = new org.springframework.data.elasticsearch.core.query.Criteria();
 
-        // 分类过滤逻辑
+        if (StringUtils.hasText(query.getTitle())) {
+            criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("title").matches(query.getTitle())
+                    .or(new org.springframework.data.elasticsearch.core.query.Criteria("description").matches(query.getTitle())));
+        }
+
+        if (query.getProductId() != null && query.getProductId() > 0) {
+            criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("productId").is(query.getProductId()));
+        }
+
+        if (query.getShopId() != null) {
+            criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("shopId").is(query.getShopId()));
+        }
+
+        if (query.getStatus() != null) {
+            criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("status").is(query.getStatus()));
+        }
+
         if (query.getProductCategoryId() != null && query.getProductCategoryId() > 0) {
-            List<Product> products = productService.list(new LambdaQueryWrapper<Product>()
+            List<Product> products = productService.list(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Product>()
                     .eq(Product::getCategoryId, query.getProductCategoryId()));
             if (!products.isEmpty()) {
                 List<Long> productIds = products.stream().map(Product::getId).collect(java.util.stream.Collectors.toList());
-                wrapper.in(Video::getProductId, productIds);
+                criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("productId").in(productIds));
             } else {
-                wrapper.eq(Video::getProductId, -1L);
+                return new PageResult<>();
             }
         }
 
-        // MERCHANT 只看自己名下店铺的视频；ADMIN/null/empty 不过滤
         List<Long> shopIds = ownershipChecker.myShopIds();
         if (shopIds != null) {
             if (shopIds.isEmpty()) {
-                wrapper.eq(Video::getShopId, -1L); // MERCHANT 无店铺 → 返回空
+                return new PageResult<>();
             } else {
-                wrapper.in(Video::getShopId, shopIds);
+                criteria.and(new org.springframework.data.elasticsearch.core.query.Criteria("shopId").in(shopIds));
             }
         }
 
-        return PageResult.of(page(page, wrapper));
+        org.springframework.data.elasticsearch.core.query.CriteriaQuery cq = new org.springframework.data.elasticsearch.core.query.CriteriaQuery(criteria);
+        cq.addSort(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createTime"));
+        cq.setPageable(org.springframework.data.domain.PageRequest.of((int)(query.getCurrent() - 1), (int)query.getSize()));
+
+        org.springframework.data.elasticsearch.core.SearchHits<VideoES> hits = elasticsearchOperations.search(cq, VideoES.class);
+        
+        List<Video> resultList = new ArrayList<>();
+        if (hits.getTotalHits() > 0) {
+            List<Long> idList = hits.getSearchHits().stream()
+                    .map(h -> h.getContent().getId())
+                    .collect(java.util.stream.Collectors.toList());
+            List<Video> dbVideos = this.listByIds(idList);
+            java.util.Map<Long, Video> map = dbVideos.stream().collect(java.util.stream.Collectors.toMap(Video::getId, v -> v));
+            for (Long id : idList) {
+                if (map.containsKey(id)) {
+                    resultList.add(map.get(id));
+                }
+            }
+        }
+
+        PageResult<Video> pageResult = new PageResult<>();
+        pageResult.setCurrent((long) query.getCurrent());
+        pageResult.setSize((long) query.getSize());
+        pageResult.setTotal(hits.getTotalHits());
+        pageResult.setRecords(resultList);
+        return pageResult;
     }
 
     @Override
@@ -151,6 +296,8 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
         update.setViews(video.getViews() + 1);
         updateById(update);
         video.setViews(video.getViews() + 1);
+        
+        syncToEsAfterCommit(id);
 
         // 组装 VO
         VideoDetailVO vo = new VideoDetailVO();
@@ -214,6 +361,8 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
         
         // 5. 将这些装载好的新字段，更新到数据库里
         updateById(update);
+        
+        syncToEsAfterCommit(id);
     }
 
     @Override
@@ -225,6 +374,7 @@ public class VideoServiceImpl extends ServiceImpl<VideoMapper, Video> implements
         // MERCHANT 只能删本人店铺的视频，通过 shop.owner_id 校验
         ownershipChecker.assertShopOwned(existing.getShopId());
         removeById(id);
+        deleteFromEsAfterCommit(id);
     }
 
 }

@@ -125,4 +125,10 @@ public class VideoController {
         videoService.deleteVideo(id, loginUser.getUserId(), loginUser.getRole());
         return Result.success();
     }
+
+    @Operation(summary = "全量同步视频到ES (内部用)")
+    @PostMapping("/es/sync")
+    public Result<Long> syncToES() {
+        return Result.success(videoService.syncAllToES());
+    }
 }

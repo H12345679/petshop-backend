@@ -23,4 +23,7 @@ public interface ShopService extends IService<Shop> {
 
     /** 分页查询：支持按名称模糊 + 营业状态过滤。 */
     PageResult<Shop> pageShops(ShopPageQuery query);
+
+    /** 同步所有商店数据到 ES */
+    long syncAllToES();
 }

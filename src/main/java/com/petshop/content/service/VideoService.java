@@ -64,4 +64,5 @@ public interface VideoService extends IService<Video> {
      * @param role        当前登录角色
      */
     void deleteVideo(Long id, Long loginUserId, String role);
+    long syncAllToES();
 }

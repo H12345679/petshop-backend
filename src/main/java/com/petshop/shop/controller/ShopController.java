@@ -83,4 +83,10 @@ public class ShopController {
         return Result.success(shopService.pageShops(query));
     }
 
+    @Operation(summary = "全量同步商店到ES (内部用)")
+    @PostMapping("/es/sync")
+    public Result<Long> syncToES() {
+        return Result.success(shopService.syncAllToES());
+    }
+
 }
