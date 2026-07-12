@@ -31,6 +31,9 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
     @Autowired
     private UserCouponMapper userCouponMapper;
 
+    @Autowired
+    private org.springframework.data.redis.core.StringRedisTemplate stringRedisTemplate;
+
     // ==================== 前台 ====================
 
     @Override
@@ -50,6 +53,14 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
     @Transactional
     public void receive(Long couponId) {
         Long userId = requireUserId();
+
+        // 基于 Redis SETNX 的轻量级分布式锁，防单人并发薅羊毛。
+        // 为了防止事务尚未提交而锁先被释放导致幻读，这里设置锁 5 秒自动过期，不手动删除。
+        String lockKey = "lock:coupon:receive:" + userId + ":" + couponId;
+        Boolean lock = stringRedisTemplate.opsForValue().setIfAbsent(lockKey, "1", 5, java.util.concurrent.TimeUnit.SECONDS);
+        if (Boolean.FALSE.equals(lock)) {
+            throw new BusinessException("操作太快啦，请稍后再试");
+        }
 
         // 1) 校验目标优惠券是否存在，以及是否处于有效的上架状态
         Coupon coupon = this.getById(couponId);
