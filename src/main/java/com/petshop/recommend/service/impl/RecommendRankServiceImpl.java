@@ -42,8 +42,9 @@ public class RecommendRankServiceImpl implements RecommendRankService {
 
     // 融合权重（三路召回）
     private static final double W_CF = 0.40;
-    private static final double W_TAG = 0.35;
-    private static final double W_PET = 0.25;
+    private static final double W_TAG = 0.25;
+    private static final double W_PET = 0.20;
+    private static final double W_HEAT = 0.15;
     /** 近 30 天购买过的商品降权 */
     private static final double PENALTY_RECENT_BUY = 0.30;
     /** 同类目最多展示件数（打散） */
@@ -113,8 +114,15 @@ public class RecommendRankServiceImpl implements RecommendRankService {
                                            Set<Long> recentBought,
                                            List<Integer> mySpecies) {
         double cfMax = maxValue(cfScore); // 归一化分母
+        // 找出候选集中最高销量，用于人群热度归一化
+        double salesMax = products.values().stream()
+                .mapToInt(p -> p.getSales() == null ? 0 : p.getSales())
+                .max().orElse(0);
+        salesMax = salesMax > 0 ? salesMax : 1.0;
+
         List<Object[]> scored = new ArrayList<>();
         for (Long pid : products.keySet()) {
+            Product p = products.get(pid);
             Set<Long> tags = productTags.getOrDefault(pid, Collections.emptySet());
             //  跨物种拦截：属于其他物种专属商品（如养狗用户遇到猫粮），直接过滤
             if (!mySpecies.isEmpty() && speciesConflict(tags, mySpecies)) continue;
@@ -122,14 +130,15 @@ public class RecommendRankServiceImpl implements RecommendRankService {
             double cf = cfMax > 0 ? cfScore.getOrDefault(pid, 0.0) / cfMax : 0.0;
             double tagMatch = calcTagMatch(tags, profileTagWeight);
             double pet = calcPetMatch(tags, petTagIds);
+            double heat = (p.getSales() == null ? 0 : p.getSales()) / salesMax;
 
             // 综合加权计算总分
-            double score = W_CF * cf + W_TAG * tagMatch + W_PET * pet;
+            double score = W_CF * cf + W_TAG * tagMatch + W_PET * pet + W_HEAT * heat;
             //  频次调优：近 30 天买过的商品扣减惩罚分
             if (recentBought.contains(pid)) score -= PENALTY_RECENT_BUY;
             if (score <= 0) continue;
 
-            scored.add(new Object[]{pid, score, pickReason(cf, tagMatch, pet, petTagIds.isEmpty(), mySpecies)});
+            scored.add(new Object[]{pid, score, pickReason(cf, tagMatch, pet, heat, petTagIds.isEmpty(), mySpecies)});
         }
         // 按最终综合得分从高到低降序排序
         scored.sort((a, b) -> Double.compare((double) b[1], (double) a[1]));
@@ -386,18 +395,20 @@ public class RecommendRankServiceImpl implements RecommendRankService {
         return cache.get(name);
     }
 
-    /** 按三路贡献大小挑推荐理由（个人信息路优先展示，演示效果直观） */
-    private String pickReason(double cf, double tag, double pet,
+    /** 按贡献大小挑推荐理由（个人信息路优先展示，演示效果直观） */
+    private String pickReason(double cf, double tag, double pet, double heat,
                               boolean noPet, List<Integer> mySpecies) {
         double petContrib = noPet ? 0 : W_PET * pet;
         double tagContrib = W_TAG * tag;
         double cfContrib = W_CF * cf;
+        double heatContrib = W_HEAT * heat;
 
-        double max = Math.max(Math.max(petContrib, tagContrib), cfContrib);
+        double max = Math.max(Math.max(petContrib, tagContrib), Math.max(cfContrib, heatContrib));
         if (max <= 0) return "热销好物";
         if (max == petContrib) return "为你的" + speciesNick(mySpecies) + "挑选";
         if (max == tagContrib) return "根据你的浏览偏好";
-        return "和你相似的用户也买了";
+        if (max == cfContrib) return "和你相似的用户也买了";
+        return "近期热度飙升商品";
     }
 
     private String speciesNick(List<Integer> species) {

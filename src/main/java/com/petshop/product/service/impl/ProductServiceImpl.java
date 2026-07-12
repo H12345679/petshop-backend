@@ -59,6 +59,11 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     private com.petshop.shop.mapper.ShopMapper shopMapper;
     @Autowired
     private com.petshop.recommend.service.RecommendRankService recommendRankService;
+
+    @Autowired
+    @org.springframework.beans.factory.annotation.Qualifier("homeAssemblyThreadPool")
+    private java.util.concurrent.Executor homeAssemblyThreadPool;
+
     @Autowired
     private ProductESRepository productESRepository;
     @Autowired
@@ -537,18 +542,83 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         int n = (limit == null || limit <= 0) ? 6 : Math.min(limit, 50);
 
         if ("RECOMMEND".equalsIgnoreCase(strategy)) {
-            return recommendProducts(n);
+            return recommendProducts(n, UserContext.getUserId());
         }
         if ("NEW".equalsIgnoreCase(strategy)) {
             return homeNewProducts(n);
         }
         if ("CF".equalsIgnoreCase(strategy)) {
-            return homeCfProducts(n);
+            return homeCfProducts(n, UserContext.getUserId());
         }
         // HOT / 默认 → 按销量
         LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
         w.eq(Product::getStatus, 1).orderByDesc(Product::getSales);
         return getPageWithFallbackProtection(w, n, 1);
+    }
+
+    @Override
+    public List<com.petshop.product.entity.HomeSectionVO> assembleHome(int limit) {
+        int n = (limit <= 0) ? 6 : Math.min(limit, 50);
+        // 在主线程获取 userId，防止在 CompletableFuture 异步线程中 ThreadLocal 丢失
+        Long userId = UserContext.getUserId();
+
+        // 1. 动态定义楼层配置（未来可放进数据库/配置中心，支持A/B测试）
+        List<com.petshop.product.entity.HomeSectionVO> configs = java.util.Arrays.asList(
+            new com.petshop.product.entity.HomeSectionVO("CF", "🛍️ 大家都在买", null),
+            new com.petshop.product.entity.HomeSectionVO("RECOMMEND", "💡 为你推荐", null),
+            new com.petshop.product.entity.HomeSectionVO("HOT", "🔥 热销榜单", null),
+            new com.petshop.product.entity.HomeSectionVO("NEW", "✨ 新鲜上架", null)
+        );
+
+        // 2. 动态发起并发任务，使用专属线程池，添加熔断超时和异常降级
+        List<java.util.concurrent.CompletableFuture<com.petshop.product.entity.HomeSectionVO>> futures = new java.util.ArrayList<>();
+        
+        for (com.petshop.product.entity.HomeSectionVO config : configs) {
+            java.util.concurrent.CompletableFuture<com.petshop.product.entity.HomeSectionVO> future = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                List<Product> products = new java.util.ArrayList<>();
+                switch (config.getTag()) {
+                    case "CF":
+                        products = homeCfProducts(n, userId);
+                        break;
+                    case "RECOMMEND":
+                        products = recommendProducts(n, userId);
+                        break;
+                    case "NEW":
+                        products = homeNewProducts(n);
+                        break;
+                    case "HOT":
+                    default:
+                        LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();
+                        w.eq(Product::getStatus, 1).orderByDesc(Product::getSales);
+                        products = getPageWithFallbackProtection(w, n, 1);
+                        break;
+                }
+                config.setList(products);
+                return config;
+            }, homeAssemblyThreadPool)
+            // 工业级：如果某个算法卡死，500ms 后强制熔断返回空数据，防止整个首页雪崩
+            .completeOnTimeout(new com.petshop.product.entity.HomeSectionVO(config.getTag(), config.getTitle(), new java.util.ArrayList<>()), 500, java.util.concurrent.TimeUnit.MILLISECONDS)
+            // 工业级：局部异常隔离，某一路算法报错不影响其他楼层
+            .exceptionally(e -> {
+                log.error("首页装配楼层异常: " + config.getTag(), e);
+                return new com.petshop.product.entity.HomeSectionVO(config.getTag(), config.getTitle(), new java.util.ArrayList<>());
+            });
+            futures.add(future);
+        }
+
+        // 3. 阻塞等待所有并发请求完成，或部分降级完成
+        java.util.concurrent.CompletableFuture.allOf(futures.toArray(new java.util.concurrent.CompletableFuture[0])).join();
+
+        // 4. 按原有配置顺序组装返回
+        List<com.petshop.product.entity.HomeSectionVO> result = new java.util.ArrayList<>();
+        for (java.util.concurrent.CompletableFuture<com.petshop.product.entity.HomeSectionVO> f : futures) {
+            try {
+                result.add(f.get());
+            } catch (Exception e) {
+                // 已被 exceptionally 兜底，理论上不会走到这里
+            }
+        }
+        return result;
     }
 
     /** 首页「最新上架」策略 */
@@ -559,8 +629,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     }
 
     /** 首页「协同过滤推荐」策略：登录用户取 CF 推荐结果，未命中则错峰兜底 */
-    private List<Product> homeCfProducts(int n) {
-        Long userId = UserContext.getUserId();
+    private List<Product> homeCfProducts(int n, Long userId) {
         if (userId != null) {
             List<Product> cfResult = fetchCfRecommendations(userId, n);
             if (cfResult != null) {
@@ -598,8 +667,7 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         return list;
     }
 
-    private List<Product> recommendProducts(int n) {
-        Long userId = UserContext.getUserId();
+    private List<Product> recommendProducts(int n, Long userId) {
         if (userId == null) {
             // 错峰兜底：未登录访客取 NEW（最新上架）的第 2 页，避开首屏第 1 页的上新榜；同时带智能防破窗
             LambdaQueryWrapper<Product> w = new LambdaQueryWrapper<>();

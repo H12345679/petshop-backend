@@ -32,4 +32,11 @@ public class HomeController {
             @RequestParam(defaultValue = "6") Integer limit) {
         return Result.success(productService.homeProducts(strategy, limit));
     }
+
+    @Operation(summary = "企业级首页展示规则引擎：动态聚合楼层数据（含熔断降级隔离）")
+    @GetMapping("/index")
+    public Result<List<com.petshop.product.entity.HomeSectionVO>> homeIndex(
+            @RequestParam(defaultValue = "6") Integer limit) {
+        return Result.success(productService.assembleHome(limit));
+    }
 }
