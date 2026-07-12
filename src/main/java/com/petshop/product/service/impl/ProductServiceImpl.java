@@ -63,6 +63,8 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
     private ProductESRepository productESRepository;
     @Autowired
     private ElasticsearchOperations elasticsearchOperations;
+    @Autowired
+    private com.petshop.ai.AiProvider aiProvider;
 
     private ProductES mapToES(Product product) {
         if (product == null) return null;
@@ -80,6 +82,18 @@ public class ProductServiceImpl extends ServiceImpl<ProductMapper, Product>
         if (product.getCreateTime() != null) {
             es.setCreateTime(java.util.Date.from(product.getCreateTime().atZone(java.time.ZoneId.systemDefault()).toInstant()));
         }
+
+        // 提取商品文本生成 Embedding
+        try {
+            String textToEmbed = String.format("商品名称：%s,描述：%s", 
+                product.getName() != null ? product.getName() : "", 
+                product.getDescription() != null ? product.getDescription() : "");
+            java.util.List<Double> embedding = aiProvider.getEmbedding(textToEmbed);
+            es.setEmbedding(embedding);
+        } catch (Exception e) {
+            log.warn("生成商品 Embedding 失败: " + e.getMessage());
+        }
+
         return es;
     }
 

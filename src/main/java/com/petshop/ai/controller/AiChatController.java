@@ -69,6 +69,15 @@ public class AiChatController {
         return Result.success(list);
     }
 
+    @Operation(summary = "删除 AI 历史会话")
+    @RequireLogin
+    @org.springframework.web.bind.annotation.DeleteMapping("/chat/session")
+    public Result<Void> deleteSession(@RequestParam String sessionId) {
+        Long userId = UserContext.getUserId();
+        aiChatService.deleteSession(userId, sessionId);
+        return Result.success();
+    }
+
     /** 尝试从请求头解析 Token 获取 userId，解析失败返回 null */
     private Long resolveUserId(HttpServletRequest request) {
         String token = request.getHeader("Authorization");

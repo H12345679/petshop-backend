@@ -48,4 +48,7 @@ public class ProductES {
 
     @Field(type = FieldType.Date)
     private Date createTime;
+
+    @Field(type = FieldType.Dense_Vector, dims = 1024)
+    private java.util.List<Double> embedding;
 }

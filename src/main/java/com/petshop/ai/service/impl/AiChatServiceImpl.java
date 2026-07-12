@@ -35,13 +35,41 @@ public class AiChatServiceImpl implements AiChatService {
     @Autowired
     private ProductMapper productMapper;
 
+    @Autowired
+    private org.springframework.data.elasticsearch.core.ElasticsearchOperations elasticsearchOperations;
+
     @Override
     public org.springframework.web.servlet.mvc.method.annotation.SseEmitter streamChat(Long userId, String sessionId, String question) {
         org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter = new org.springframework.web.servlet.mvc.method.annotation.SseEmitter(60000L);
 
-        QueryWrapper<Product> qw = new QueryWrapper<>();
-        qw.eq("status", 1).orderByDesc(CREATE_TIME).last("LIMIT 30");
-        List<Product> productList = productMapper.selectList(qw);
+        List<Product> productList = new ArrayList<>();
+        try {
+            // 1. 获取问题向量
+            List<Double> queryVector = aiProvider.getEmbedding(question);
+            
+            // 2. 构造向量相似度查询 (script_score)
+            String vectorJson = queryVector.toString(); // [0.1, 0.2, ...]
+            String queryStr = "{\"script_score\": {\"query\": {\"term\": {\"status\": 1}}, \"script\": {\"source\": \"cosineSimilarity(params.query_vector, 'embedding') + 1.0\", \"params\": {\"query_vector\": " + vectorJson + "}}}}";
+            
+            org.springframework.data.elasticsearch.core.query.StringQuery sq = new org.springframework.data.elasticsearch.core.query.StringQuery(queryStr);
+            sq.setPageable(org.springframework.data.domain.PageRequest.of(0, 10)); // 取 Top 10 相关商品
+            
+            org.springframework.data.elasticsearch.core.SearchHits<com.petshop.product.entity.ProductES> hits = 
+                elasticsearchOperations.search(sq, com.petshop.product.entity.ProductES.class);
+            
+            List<Long> productIds = hits.getSearchHits().stream()
+                .map(h -> h.getContent().getId())
+                .collect(Collectors.toList());
+            
+            if (!productIds.isEmpty()) {
+                productList = productMapper.selectBatchIds(productIds);
+            }
+        } catch (Exception e) {
+            // 如果 ES 还没准备好或没有向量数据，降级为普通的关键字匹配或最新商品
+            QueryWrapper<Product> qw = new QueryWrapper<>();
+            qw.eq("status", 1).orderByDesc(CREATE_TIME).last("LIMIT 10");
+            productList = productMapper.selectList(qw);
+        }
         
         StringBuilder contextBuilder = new StringBuilder();
         for (Product p : productList) {
@@ -127,5 +155,15 @@ public class AiChatServiceImpl implements AiChatService {
         List<AiSessionVO> list = new ArrayList<>(map.values());
         Collections.reverse(list);
         return list;
+    }
+
+    @Override
+    public void deleteSession(Long userId, String sessionId) {
+        if (userId == null || sessionId == null) {
+            return;
+        }
+        QueryWrapper<AiChatLog> qw = new QueryWrapper<>();
+        qw.eq("user_id", userId).eq("session_id", sessionId);
+        aiChatLogMapper.delete(qw);
     }
 }

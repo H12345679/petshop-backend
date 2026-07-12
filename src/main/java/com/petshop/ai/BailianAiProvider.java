@@ -18,42 +18,47 @@ import java.nio.charset.StandardCharsets;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.function.Consumer;
 import java.util.List;
 import java.util.Map;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 /**
- * DeepSeek AI 实现（OpenAI 兼容协议）。
+ * 阿里百炼（DashScope）AI 实现（OpenAI 兼容协议）。
  * <p>
- * 启用方式：在 application.yml 中设置 ai.provider=deepseek 并配置 api-key。
+ * 支持大模型对话和文本 Embedding。
+ * 启用方式：在 application.yml 中设置 ai.provider=bailian 并配置 api-key。
  * </p>
  */
 @Slf4j
 @Component
-@ConditionalOnProperty(prefix = "ai", name = "provider", havingValue = "deepseek")
-public class DeepSeekAiProvider implements AiProvider {
+@ConditionalOnProperty(prefix = "ai", name = "provider", havingValue = "bailian")
+public class BailianAiProvider implements AiProvider {
 
     private static final String CONTENT = "content";
 
-    @Value("${ai.deepseek.api-key}")
+    @Value("${ai.bailian.api-key}")
     private String apiKey;
 
-    @Value("${ai.deepseek.model:deepseek-chat}")
+    @Value("${ai.bailian.model:qwen-plus}")
     private String model;
 
-    @Value("${ai.deepseek.base-url:https://api.deepseek.com/v1}")
+    @Value("${ai.bailian.embedding-model:text-embedding-v3}")
+    private String embeddingModel;
+
+    @Value("${ai.bailian.base-url:https://dashscope.aliyuncs.com/compatible-mode/v1}")
     private String baseUrl;
 
-    @Value("${ai.deepseek.timeout:30000}")
+    @Value("${ai.bailian.timeout:30000}")
     private int timeout;
 
-    private String apiUrl;
+    private String chatApiUrl;
+    private String embeddingApiUrl;
     private final RestTemplate restTemplate;
 
-    public DeepSeekAiProvider() {
+    public BailianAiProvider() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10000);
         factory.setReadTimeout(60000);
@@ -62,11 +67,52 @@ public class DeepSeekAiProvider implements AiProvider {
 
     @PostConstruct
     public void init() {
-        this.apiUrl = baseUrl + "/chat/completions";
+        this.chatApiUrl = baseUrl + "/chat/completions";
+        this.embeddingApiUrl = baseUrl + "/embeddings";
         SimpleClientHttpRequestFactory factory = (SimpleClientHttpRequestFactory) this.restTemplate.getRequestFactory();
         factory.setConnectTimeout(timeout);
         factory.setReadTimeout(timeout);
-        log.info("DeepSeek AI Provider 已启用，接口: {}, 模型: {}, 超时: {}ms", apiUrl, model, timeout);
+        log.info("百炼 AI Provider 已启用，对话模型: {}, Embedding模型: {}, 超时: {}ms", model, embeddingModel, timeout);
+    }
+
+    @Override
+    public List<Double> getEmbedding(String text) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setBearerAuth(apiKey);
+
+            Map<String, Object> body = Map.of(
+                "model", embeddingModel,
+                "input", text,
+                // text-embedding-v3 默认输出 1024 维向量
+                "dimensions", 1024 
+            );
+
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+            ResponseEntity<EmbeddingResponse> response = restTemplate.postForEntity(
+                    embeddingApiUrl, request, EmbeddingResponse.class);
+
+            if (response.getBody() != null && response.getBody().data != null && !response.getBody().data.isEmpty()) {
+                return response.getBody().data.get(0).embedding;
+            }
+
+            log.warn("百炼 Embedding 返回空结果");
+        } catch (HttpClientErrorException e) {
+            String respBody = e.getResponseBodyAsString(StandardCharsets.UTF_8);
+            log.error("百炼 Embedding API 认证/请求失败 [{}]: {}", e.getStatusCode(), respBody);
+        } catch (Exception e) {
+            log.error("百炼 Embedding API 调用异常", e);
+        }
+        
+        // 兜底返回随机向量防止整个流程报错退出
+        log.info("由于 Embedding 获取失败，返回 Mock 随机向量进行兜底");
+        List<Double> mockEmbedding = new java.util.ArrayList<>(1024);
+        java.security.SecureRandom random = new java.security.SecureRandom();
+        for (int i = 0; i < 1024; i++) {
+            mockEmbedding.add(random.nextDouble());
+        }
+        return mockEmbedding;
     }
 
     @Override
@@ -76,11 +122,7 @@ public class DeepSeekAiProvider implements AiProvider {
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.setBearerAuth(apiKey);
             
-            String sysPrompt = "你是一个专业的宠物健康顾问，擅长回答关于猫、狗、兔子、鹦鹉等常见宠物的饲养、健康、营养、行为等问题。请用中文回答，语气亲切专业。如果用户问的不是宠物相关的问题，请友好地引导用户回到宠物话题。";
-            if (context != null && !context.trim().isEmpty()) {
-                sysPrompt += "\n【商城在售商品库】：\n" + context +
-                             "\n\n要求：如果用户询问购买建议，请严格从上述商品库中挑选1-3款推荐给他，必须给出推荐理由，并且必须使用Markdown链接格式附带商品链接，例如：[【商品名】](/product/商品ID)。如果商品库中没有合适的，请委婉说明。";
-            }
+            String sysPrompt = buildSystemPrompt(context);
 
             Map<String, Object> body = Map.of(
                 "model", model,
@@ -93,8 +135,8 @@ public class DeepSeekAiProvider implements AiProvider {
             );
 
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-            ResponseEntity<DeepSeekResponse> response = restTemplate.postForEntity(
-                    apiUrl, request, DeepSeekResponse.class);
+            ResponseEntity<ChatResponse> response = restTemplate.postForEntity(
+                    chatApiUrl, request, ChatResponse.class);
 
             if (response.getBody() != null
                     && response.getBody().choices != null
@@ -102,16 +144,15 @@ public class DeepSeekAiProvider implements AiProvider {
                 return response.getBody().choices.get(0).message.content;
             }
 
-            log.warn("DeepSeek 返回空结果");
+            log.warn("百炼 Chat 返回空结果");
             return "抱歉，AI 服务暂时无法回答，请稍后再试。";
 
         } catch (HttpClientErrorException e) {
-            // 捕获 4xx 错误，打印 DeepSeek 返回的具体原因
             String respBody = e.getResponseBodyAsString(StandardCharsets.UTF_8);
-            log.error("DeepSeek API 认证/请求失败 [{}]: {}", e.getStatusCode(), respBody);
+            log.error("百炼 Chat API 认证/请求失败 [{}]: {}", e.getStatusCode(), respBody);
             return "AI 服务调用失败（" + e.getStatusCode() + "）：" + respBody;
         } catch (Exception e) {
-            log.error("DeepSeek API 调用异常", e);
+            log.error("百炼 Chat API 调用异常", e);
             return "抱歉，AI 服务暂时不可用：" + e.getMessage();
         }
     }
@@ -119,16 +160,7 @@ public class DeepSeekAiProvider implements AiProvider {
     @Override
     public void streamChat(String question, String context, Consumer<String> onMessage, Runnable onComplete, Consumer<Throwable> onError) {
         try {
-            String sysPrompt = "你是一个专业的宠物健康顾问，擅长回答关于猫、狗、兔子、鹦鹉等常见宠物的饲养、健康、营养、行为等问题。请用中文回答，语气亲切专业。如果用户问的不是宠物相关的问题，请友好地引导用户回到宠物话题。";
-            if (context != null && !context.trim().isEmpty()) {
-                sysPrompt += "\n\n【商城在售商品库】：\n" + context +
-                             "\n\n【重要格式规则，必须严格遵守】：\n" +
-                             "1. 推荐商品时，必须使用标准Markdown链接格式，格式为：[商品名](/product/商品ID)\n" +
-                             "   正确示例：[宠物营养主食罐头 170g](/product/1010)\n" +
-                             "   ⚠️极端重要：外层必须是英文半角中括号 []，不能写成 【】 或 【【 ！\n" +
-                             "2. 链接部分必须使用英文半角小括号 ()，URL路径内不能有任何空格。\n" +
-                             "3. 如果商品库中没有合适的，请委婉说明。";
-            }
+            String sysPrompt = buildSystemPrompt(context);
 
             Map<String, Object> bodyMap = Map.of(
                 "model", model,
@@ -149,7 +181,7 @@ public class DeepSeekAiProvider implements AiProvider {
                     .build();
 
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(apiUrl))
+                    .uri(URI.create(chatApiUrl))
                     .timeout(Duration.ofMillis(timeout))
                     .header("Content-Type", "application/json")
                     .header("Accept", "text/event-stream")
@@ -157,12 +189,11 @@ public class DeepSeekAiProvider implements AiProvider {
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
-            // 发送同步请求，获取 InputStream 确保绝对的流式读取
             java.net.http.HttpResponse<java.io.InputStream> response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
 
             if (response.statusCode() != 200) {
                 String errorBody = new String(response.body().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-                log.error("DeepSeek SSE API 请求失败 [{}]: {}", response.statusCode(), errorBody);
+                log.error("百炼 SSE API 请求失败 [{}]: {}", response.statusCode(), errorBody);
                 onError.accept(new RuntimeException("API 请求失败: " + response.statusCode()));
                 return;
             }
@@ -188,9 +219,23 @@ public class DeepSeekAiProvider implements AiProvider {
             Thread.currentThread().interrupt();
             onError.accept(e);
         } catch (Exception e) {
-            log.error("DeepSeek API 流式调用异常", e);
+            log.error("百炼 API 流式调用异常", e);
             onError.accept(e);
         }
+    }
+
+    private String buildSystemPrompt(String context) {
+        String sysPrompt = "你是一个专业的宠物健康顾问，擅长回答关于猫、狗、兔子、鹦鹉等常见宠物的饲养、健康、营养、行为等问题。请用中文回答，语气亲切专业。如果用户问的不是宠物相关的问题，请友好地引导用户回到宠物话题。";
+        if (context != null && !context.trim().isEmpty()) {
+            sysPrompt += "\n\n【商城在售商品库】:\n" + context +
+                         "\n\n【重要格式规则,必须严格遵守】：\n" +
+                         "1. 推荐商品时,必须使用标准Markdown链接格式,格式为：[商品名](/product/商品ID)\n" +
+                         "   正确示例：[宠物营养主食罐头 170g](/product/1010)\n" +
+                         "   ⚠️极端重要：外层必须是英文半角中括号 [],不能写成 【】 或 【【 \n" +
+                         "2. 链接部分必须使用英文半角小括号 (),URL路径内不能有任何空格。\n" +
+                         "3. 如果商品库中没有合适的，请委婉说明。";
+        }
+        return sysPrompt;
     }
 
     private void processSseData(String data, ObjectMapper mapper, Consumer<String> onMessage) {
@@ -211,7 +256,7 @@ public class DeepSeekAiProvider implements AiProvider {
     // ---------- 响应映射 ----------
 
     @Data
-    private static class DeepSeekResponse {
+    private static class ChatResponse {
         private List<Choice> choices;
     }
 
@@ -226,16 +271,13 @@ public class DeepSeekAiProvider implements AiProvider {
         private String content;
     }
 
-    @Override
-    public List<Double> getEmbedding(String text) {
-        // DeepSeek API 当前暂未大范围开放独立的 Embedding 接口
-        // 这里为了兼容 RAG 流程，先返回一个 1024 维的随机 Mock 向量
-        // 后续如需对接真实 Embedding，可接入 OpenAI 兼容的 Text-Embedding 接口
-        List<Double> embedding = new java.util.ArrayList<>(1024);
-        java.security.SecureRandom random = new java.security.SecureRandom();
-        for (int i = 0; i < 1024; i++) {
-            embedding.add(random.nextDouble());
-        }
-        return embedding;
+    @Data
+    private static class EmbeddingResponse {
+        private List<EmbeddingData> data;
+    }
+
+    @Data
+    private static class EmbeddingData {
+        private List<Double> embedding;
     }
 }

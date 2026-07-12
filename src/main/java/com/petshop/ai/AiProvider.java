@@ -21,4 +21,12 @@ public interface AiProvider {
     default String chat(String question) {
         return chat(question, null);
     }
+
+    /** 
+     * 将文本转换为向量表示 (Embedding)
+     * 用于 RAG (检索增强生成) 的向量检索
+     */
+    default java.util.List<Double> getEmbedding(String text) {
+        throw new UnsupportedOperationException("该 AI Provider 暂不支持生成 Embedding");
+    }
 }

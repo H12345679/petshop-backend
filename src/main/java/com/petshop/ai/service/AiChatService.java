@@ -20,4 +20,6 @@ public interface AiChatService {
 
     /** 查询当前用户的所有历史会话列表 */
     List<AiSessionVO> getSessionList(Long userId);
+
+    void deleteSession(Long userId, String sessionId);
 }

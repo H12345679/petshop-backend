@@ -60,4 +60,14 @@ public class MockAiProvider implements AiProvider {
     public String chat(String question, String context) {
         return ANSWERS.get(random.nextInt(ANSWERS.size()));
     }
+
+    @Override
+    public java.util.List<Double> getEmbedding(String text) {
+        // 返回一个 1024 维的随机向量作为 Mock 数据
+        List<Double> embedding = new java.util.ArrayList<>(1024);
+        for (int i = 0; i < 1024; i++) {
+            embedding.add(random.nextDouble());
+        }
+        return embedding;
+    }
 }
