@@ -1,0 +1,76 @@
+server:
+  port: 8088   # 与原单体一致，前端 vue.config.js 的代理无需任何改动
+
+spring:
+  application:
+    name: petshop-gateway
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+    gateway:
+      # 转发时保留客户端请求头（Authorization 等默认透传）
+      routes:
+        # ---- 特例路由（更具体的路径必须排在通配路由前面，order 越小优先级越高）----
+        - id: order-product-reviews          # 商品评价列表在 order 服务（ReviewController）
+          uri: lb://petshop-order-service
+          order: -10
+          predicates:
+            - Path=/api/products/*/reviews
+        - id: order-my-coupons               # “我的优惠券”在 order 服务（CouponController）
+          uri: lb://petshop-order-service
+          order: -10
+          predicates:
+            - Path=/api/users/me/coupons
+
+        # ---- 用户服务 ----
+        - id: user-service
+          uri: lb://petshop-user-service
+          predicates:
+            - Path=/api/auth/**,/api/users/**,/api/addresses/**,/api/user/**,/api/membership/**
+
+        # ---- 商品服务（含文件上传）----
+        - id: product-service
+          uri: lb://petshop-product-service
+          predicates:
+            - Path=/api/products/**,/api/categories/**,/api/home/**,/api/files/**
+
+        # ---- 店铺服务（含门店地图）----
+        - id: shop-service
+          uri: lb://petshop-shop-service
+          predicates:
+            - Path=/api/shops/**,/api/shop-favorites/**,/api/map/**
+
+        # ---- 订单服务（购物车/订单/退款/评价/优惠券）----
+        - id: order-service
+          uri: lb://petshop-order-service
+          predicates:
+            - Path=/api/orders/**,/api/cart/**,/api/refunds/**,/api/reviews/**,/api/coupons/**
+
+        # ---- 内容服务（短视频/留言/收藏）----
+        - id: content-service
+          uri: lb://petshop-content-service
+          predicates:
+            - Path=/api/videos/**,/api/messages/**,/api/favorites/**
+
+        # ---- 推荐服务 ----
+        - id: recommend-service
+          uri: lb://petshop-recommend-service
+          predicates:
+            - Path=/api/recommend/**
+
+        # ---- AI 客服（SSE 流式接口，网关原生支持透传）----
+        - id: ai-service
+          uri: lb://petshop-ai-service
+          predicates:
+            - Path=/api/ai/**
+
+        # ---- 统计服务（经营统计 + 系统日志）----
+        - id: stats-service
+          uri: lb://petshop-stats-service
+          predicates:
+            - Path=/api/stats/**,/api/sys/**
+
+logging:
+  level:
+    org.springframework.cloud.gateway: info

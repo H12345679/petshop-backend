@@ -7,6 +7,27 @@
 name: petshop
 
 services:
+  # 服务注册中心（微服务版新增）。控制台 http://localhost:8848/nacos
+  nacos:
+    image: nacos-registry.cn-hangzhou.cr.aliyuncs.com/nacos/nacos-server:v2.5.1   # 阿里云镜像，DockerHub 拉不动时不受影响
+    container_name: petshop-nacos
+    restart: unless-stopped
+    ports:
+      - "8848:8848"            # HTTP/控制台
+      - "9848:9848"            # gRPC（Nacos 2.x 客户端必需，固定为 8848+1000）
+    environment:
+      - MODE=standalone
+      - NACOS_AUTH_ENABLE=false
+      - TZ=Asia/Shanghai
+    volumes:
+      - petshop-nacos-data:/home/nacos/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8848/nacos/v1/console/health/readiness || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
   mysql:
     image: registry.cn-beijing.aliyuncs.com/itcast/mysql:8.0.29   # 用本地已有镜像，避免从 DockerHub 慢拉
     container_name: petshop-mysql
@@ -102,6 +123,7 @@ services:
 
 
 volumes:
+  petshop-nacos-data:
   petshop-mysql-data:
   petshop-redis-data:
   petshop-rabbitmq-data:

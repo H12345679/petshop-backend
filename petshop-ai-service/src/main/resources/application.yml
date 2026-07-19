@@ -1,0 +1,10 @@
+server:
+  port: 8107
+
+spring:
+  application:
+    name: petshop-ai-service
+  config:
+    import:
+      - classpath:common-config.yml
+      - optional:classpath:local-config.yml

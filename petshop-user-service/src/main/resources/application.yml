@@ -1,0 +1,21 @@
+server:
+  port: 8101
+
+spring:
+  application:
+    name: petshop-user-service
+  config:
+    import:
+      - classpath:common-config.yml
+      - optional:classpath:local-config.yml
+  mail:
+    host: smtp.qq.com
+    port: 587
+    username: 1578006826@qq.com
+    password: lseiqestffsnhgbj
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true

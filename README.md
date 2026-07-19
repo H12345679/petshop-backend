@@ -1,7 +1,7 @@
 # 🐾 PetShop Backend — 宠物商店后端
 
-> **最后更新**：2026-06-25 &nbsp;|&nbsp; **当前版本**：v1.0.0 &nbsp;|&nbsp; **服务端口**：8088
-> **仓库地址**：Gitee 私有仓库 &nbsp;|&nbsp; **接口文档**：http://localhost:8088/doc.html
+> **最后更新**：2026-07-18 &nbsp;|&nbsp; **当前版本**：v2.0.0（微服务版） &nbsp;|&nbsp; **网关入口**：8088（前端代理不变）
+> **仓库地址**：Gitee 私有仓库 &nbsp;|&nbsp; **接口文档**：各服务独立 `http://localhost:<服务端口>/doc.html`（端口见下方微服务架构表）
 
 ---
 
@@ -14,9 +14,13 @@
 <!--
 AI_PROJECT_METADATA:
   project: petshop-backend
-  type: Spring Boot monolith (团队实训项目)
+  type: Spring Cloud Alibaba microservices (团队实训项目, v2.0 由单体拆分而来)
   language: Java 17
-  framework: Spring Boot 2.7.18 + MyBatis-Plus 3.5.5
+  framework: Spring Boot 3.5.16 + Spring Cloud 2025.0.3 + Spring Cloud Alibaba 2025.0.0.0 + MyBatis-Plus 3.5.12
+  service_registry: Nacos (standalone, port 8848)
+  api_gateway: Spring Cloud Gateway (port 8088, 与原单体端口一致)
+  rpc: OpenFeign (服务间调用) + RabbitMQ (事件驱动)
+  data_strategy: 共享库模式 (所有服务连同一 petshop 库, 实体/Mapper 下沉 petshop-common, 保住本地事务)
   build_tool: Maven
   database: MySQL 8.0 (port 3307, schema: petshop)
   cache: Redis 7 (port 6379)
@@ -79,6 +83,7 @@ AI_PROJECT_METADATA:
 
 ## 📖 目录
 
+- [微服务架构 (v2.0)](#-微服务架构-v20)
 - [项目简介](#-项目简介)
 - [团队分工与进度](#-团队分工与进度)
 - [技术架构](#-技术架构)
@@ -94,9 +99,43 @@ AI_PROJECT_METADATA:
 
 ---
 
+## 🧩 微服务架构 (v2.0)
+
+> v2.0 将原单体按业务域拆分为 **1 网关 + 8 业务服务** 的 Spring Cloud Alibaba 微服务架构。
+> 前端仍只面向 **8088**（网关端口 = 原单体端口），`vue.config.js` 代理零改动。
+
+### 服务与端口
+
+| 模块                        | 端口 | 职责                                              |
+| --------------------------- | ---- | ------------------------------------------------- |
+| `petshop-gateway`           | 8088 | API 网关：统一入口，按路径前缀路由（详见其 application.yml） |
+| `petshop-user-service`      | 8101 | 认证/用户/地址/宠物档案/会员等级（含邮件验证码）  |
+| `petshop-product-service`   | 8102 | 商品/分类/首页/ES 搜索/七牛文件上传               |
+| `petshop-shop-service`      | 8103 | 店铺/店铺收藏/门店地图 LBS                        |
+| `petshop-order-service`     | 8104 | 购物车/订单状态机/退款/评价/优惠券 + 超时取消(MQ 死信) |
+| `petshop-content-service`   | 8105 | 短视频/留言/收藏（含 ES 检索）                    |
+| `petshop-recommend-service` | 8106 | 行为消费(MQ)/画像/多路召回推荐                    |
+| `petshop-ai-service`        | 8107 | AI 智能客服（SSE 流式，网关透传）                 |
+| `petshop-stats-service`     | 8108 | 经营统计报表 + 系统操作日志查询                   |
+
+另有两个公共构件：**`petshop-common`**（统一返回/异常/JWT 拦截器/工具类/公共配置 + 共享实体与 Mapper + Feign 客户端）；网关不依赖 common（响应式技术栈）。
+
+### 关键设计（答辩要点）
+
+1. **注册发现**：所有服务注册到 **Nacos**（localhost:8848），网关与 Feign 通过服务名 `lb://petshop-xxx-service` 负载均衡寻址。
+2. **共享库模式**：8 个服务连同一个 `petshop` 库，实体/Mapper 下沉 `petshop-common`。好处：下单扣库存、优惠券核销等关键链路保持**本地事务**，不引入 Seata 也不牺牲一致性；代价：数据私有性靠约定保证。
+3. **服务间调用分三类**：
+   - **OpenFeign 同步调用**：`OwnershipChecker` 商家归属校验跨服务查 shop 服务（`ShopClient`）；推荐服务跨服务取宠物画像（`UserPetClient`）。内部接口统一挂 `/internal/**`，网关不路由、外部不可达。
+   - **RabbitMQ 事件驱动**：行为埋点（`@TrackBehavior` 切面 → `recommend.exchange` → 推荐服务消费）；订单超时取消（TTL + 死信队列）。
+   - **共享 Mapper 直查**：纯只读的跨域数据组装（如订单列表拼商品名），走共享库直查，避免无谓的远程调用放大。
+4. **JWT 鉴权**：网关只透传 `Authorization` 头；各服务用 common 里的 `JwtInterceptor`（注解驱动 `@RequireLogin/@RequireRole`）自行校验，无状态可水平扩展。
+5. **配置管理**：公共配置下沉 `petshop-common` 的 `common-config.yml`，各服务 `spring.config.import` 引入；后续可无缝平移到 Nacos 配置中心。
+
+---
+
 ## 🏪 项目简介
 
-**PetShop** 是一个全功能宠物商店电商平台后端，采用 **Spring Boot 单体架构**，面向"程序设计实训"课程需求开发。项目支持多角色（普通用户 / 商家 / 管理员），涵盖商品管理、订单交易、AI 智能客服、视频内容、会员体系等完整电商业务链路。
+**PetShop** 是一个全功能宠物商店电商平台后端，v2.0 采用 **Spring Cloud Alibaba 微服务架构**（由 v1.0 单体演进而来），面向"程序设计实训"课程需求开发。项目支持多角色（普通用户 / 商家 / 管理员），涵盖商品管理、订单交易、AI 智能客服、视频内容、会员体系等完整电商业务链路。
 
 ### 核心业务能力
 
@@ -364,23 +403,24 @@ AI_PROJECT_METADATA:
 
 ```bash
 # 在 petshop-backend 目录下
-docker compose up -d          # 启动全部中间件(MySQL/Redis/RabbitMQ/ES)
+docker compose up -d          # 启动全部中间件(Nacos/MySQL/Redis/RabbitMQ/ES)
 docker compose ps             # 等所有服务状态变 healthy
 docker compose logs -f mysql  # 查看 MySQL 日志（首次建表+导数据）
 ```
 
 | 中间件        | 地址               | 账号/密码     | 说明                                         |
 | ------------- | ------------------ | ------------- | -------------------------------------------- |
+| **Nacos**     | `localhost:8848` | 无（已关鉴权）| 注册中心，控制台 http://localhost:8848/nacos |
 | MySQL         | `localhost:3307` | root / root   | 库`petshop`，首次自动执行 `sql/init.sql` |
 | Redis         | `localhost:6379` | 无            | AOF 持久化                                   |
 | RabbitMQ      | `localhost:5672` | guest / guest | 管理界面 http://localhost:15672              |
 | Elasticsearch | `localhost:9200` | 无            | 已关闭鉴权，512MB 堆                         |
 
-> **内存不够？** 可只起核心服务：`docker compose up -d mysql redis`
+> **内存不够？** 最小可跑集：`docker compose up -d nacos mysql redis rabbitmq`（ES 相关搜索功能降级）
 
 ### Step 2：配置七牛云与 AI（可选）
 
-创建 `src/main/resources/application-local.yml`（已加入 `.gitignore`）：
+创建 `petshop-common/src/main/resources/local-config.yml`（已加入 `.gitignore`，各服务启动时自动引入）：
 
 ```yaml
 qiniu:
@@ -389,18 +429,39 @@ qiniu:
   bucket: 你的Bucket名
   domain: http://你的CDN域名
 ai:
-  provider: deepseek          # mock(默认) 或 deepseek
+  provider: deepseek          # mock(默认) 或 deepseek / bailian
   deepseek:
     api-key: sk-xxx           # 你的 DeepSeek API Key
 ```
 
-### Step 3：运行项目
+### Step 3：运行微服务
+
+先整体安装一次（把 common 装进本地仓库）：
 
 ```bash
-mvn spring-boot:run
+mvn -DskipTests install
 ```
 
-访问 http://localhost:8088/doc.html 查阅接口文档。
+再按顺序启动各服务（IDEA 里直接跑各模块的 `XxxServiceApplication`，或命令行）：
+
+```bash
+# ① 网关（前端唯一入口 8088）
+mvn -pl petshop-gateway spring-boot:run
+# ② 业务服务（顺序不严格要求，服务间调用有兜底；建议先 user/shop 后 product/order）
+mvn -pl petshop-user-service spring-boot:run       # 8101
+mvn -pl petshop-product-service spring-boot:run    # 8102
+mvn -pl petshop-shop-service spring-boot:run       # 8103
+mvn -pl petshop-order-service spring-boot:run      # 8104
+mvn -pl petshop-content-service spring-boot:run    # 8105
+mvn -pl petshop-recommend-service spring-boot:run  # 8106
+mvn -pl petshop-ai-service spring-boot:run         # 8107
+mvn -pl petshop-stats-service spring-boot:run      # 8108
+```
+
+> **不必全启**：日常联调只需 网关 + 你负责的服务（+它 Feign 依赖的服务）。
+> 全部启动后在 Nacos 控制台 http://localhost:8848/nacos 可看到 9 个实例。
+> 接口文档：各服务独立访问 `http://localhost:<端口>/doc.html`（如用户服务 http://localhost:8101/doc.html）。
+> 前端不变：仍启动 petshop-frontend（8099），其 `/api` 代理指向网关 8088。
 
 ---
 

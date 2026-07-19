@@ -1,0 +1,10 @@
+server:
+  port: 8102
+
+spring:
+  application:
+    name: petshop-product-service
+  config:
+    import:
+      - classpath:common-config.yml
+      - optional:classpath:local-config.yml

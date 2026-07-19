@@ -27,3 +27,4 @@ application-local.yml
 
 # 随包的 Maven 发行版
 apache-maven-3.9.6/
+local-config.yml

@@ -1,0 +1,10 @@
+server:
+  port: 8106
+
+spring:
+  application:
+    name: petshop-recommend-service
+  config:
+    import:
+      - classpath:common-config.yml
+      - optional:classpath:local-config.yml

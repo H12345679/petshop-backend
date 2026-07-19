@@ -1,0 +1,10 @@
+server:
+  port: 8104
+
+spring:
+  application:
+    name: petshop-order-service
+  config:
+    import:
+      - classpath:common-config.yml
+      - optional:classpath:local-config.yml
