@@ -1,7 +1,8 @@
-# 宠物商店 - 中间件（MySQL + Redis）一键启动
+# 宠物商店 - 中间件一键启动
 # 启动： docker compose up -d
 # 停止： docker compose down        （保留数据）
-# 重置： docker compose down -v     （删库重来，会重新执行 sql/init.sql）
+# 重置： docker compose down -v     （删库重来，得到空库；建表需手动导入：
+#         docker exec -i petshop-mysql mysql -uroot -proot petshop < sql/init.sql）
 #
 # 注意：MySQL 宿主机端口用 3307（容器内仍是 3306），避免和本机已装的 MySQL(3306) 冲突。
 name: petshop
