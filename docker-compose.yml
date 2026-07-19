@@ -45,8 +45,6 @@ services:
       - --skip-name-resolve
     volumes:
       - petshop-mysql-data:/var/lib/mysql
-      # 首次启动自动执行建表脚本
-      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
       interval: 10s

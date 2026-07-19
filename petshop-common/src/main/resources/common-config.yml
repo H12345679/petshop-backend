@@ -14,15 +14,16 @@ spring:
   cloud:
     nacos:
       discovery:
-        server-addr: ${NACOS_ADDR:localhost:8848}
+        server-addr: ${PETSHOP_NACOS_ADDR:localhost:8848}
 
   datasource:
     type: com.alibaba.druid.pool.DruidDataSource
     driver-class-name: com.mysql.cj.jdbc.Driver
     # 共享库模式：所有服务连同一个 petshop 库（本地事务保住下单扣库存等关键链路）
-    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3307}/${DB_NAME:petshop}?useUnicode=true&characterEncoding=utf8&serverTimezone=GMT%2B8&useSSL=false&allowPublicKeyRetrieval=true
-    username: ${DB_USER:root}
-    password: ${DB_PASSWORD:root}
+    # 占位符统一带 PETSHOP_ 前缀，避免与机器上其它项目的 DB_* 环境变量撞名
+    url: jdbc:mysql://${PETSHOP_DB_HOST:localhost}:${PETSHOP_DB_PORT:3307}/${PETSHOP_DB_NAME:petshop}?useUnicode=true&characterEncoding=utf8&serverTimezone=GMT%2B8&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${PETSHOP_DB_USER:root}
+    password: ${PETSHOP_DB_PASSWORD:root}
     druid:
       initial-size: 5
       min-idle: 5
@@ -38,8 +39,8 @@ spring:
 
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
+      host: ${PETSHOP_REDIS_HOST:localhost}
+      port: ${PETSHOP_REDIS_PORT:6379}
       database: 0
       timeout: 5000ms
       lettuce:
@@ -49,14 +50,14 @@ spring:
           min-idle: 2
 
   rabbitmq:
-    host: ${MQ_HOST:localhost}
+    host: ${PETSHOP_MQ_HOST:localhost}
     port: 5672
     username: guest
     password: guest
     virtual-host: /
 
   elasticsearch:
-    uris: ${ES_URIS:http://localhost:9200}
+    uris: ${PETSHOP_ES_URIS:http://localhost:9200}
     connection-timeout: 5s
 
   jackson:

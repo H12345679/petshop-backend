@@ -469,7 +469,8 @@ mvn -pl petshop-stats-service spring-boot:run      # 8108
 
 ### 分包与编码约定
 
-* **分包结构**：`com.petshop.<模块名>/{controller,entity,mapper,service/impl,dto,vo}`
+* **多模块结构（v2.0）**：`petshop-<域名>-service/` 内放 `controller/service/schedule/mq`；`entity/mapper/dto/vo` 统一下沉 `petshop-common`（共享库模式）；Feign 客户端在 `petshop-common` 的 `com.petshop.api.client` 包。
+* **分包结构**：包名保持 `com.petshop.<模块名>/{controller,entity,mapper,service/impl,dto,vo}` 不变（拆分只动模块归属，不动包名，前后端接口零变化）。
 * **实体类继承**：常规表继承 `BaseEntity`（含软删）；物理删除表继承 `BaseEntityLite`。
 * **日期格式**：统一返回 `yyyy-MM-dd HH:mm:ss`，时区 GMT+8。
 
